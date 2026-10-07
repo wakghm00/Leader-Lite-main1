@@ -1,0 +1,13 @@
+name: My Config
+version: 0.0.1
+schema: v1
+models:
+  - name: Nemotron 3 Nano Omni
+    provider: openai
+    model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+    apiBase: https://integrate.api.nvidia.com/v1
+    apiKey: nvapi-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
+    roles:
+      - chat
+      - edit
+      - apply

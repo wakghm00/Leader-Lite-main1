@@ -1,0 +1,25 @@
+name: Local Config
+version: 1.1.0
+schema: v1
+models:
+  - name: DeepSeek V4 Flash 0731 Free
+    provider: openrouter
+    model: deepseek/deepseek-v4-flash-0731:free  # 换成当前可用的免费版
+    apiKey: sk-or-v1-xxxx
+    roles:
+      - chat
+      - edit
+      - apply
+
+  - name: DeepSeek R1 Free
+    provider: openrouter
+    model: deepseek/deepseek-r1:free
+    apiKey: sk-or-v1-xxxx
+    roles:
+      - chat
+# 补全建议用轻量模型，或者干脆注释掉不用免费模型做补全（容易触发限流）
+tabAutocompleteModel:
+  name: DeepSeek V4 Flash 0731 Free
+  provider: openrouter
+  model: deepseek/deepseek-v4-flash-0731:free
+  apiKey: sk-or-v1-xxxx

@@ -1,0 +1,303 @@
+package leader.module.modules.movement;
+
+import com.google.common.base.CaseFormat;
+import io.netty.buffer.Unpooled;
+import leader.mixin.IAccessorPlayerControllerMP;
+import net.minecraft.client.Minecraft;
+import net.minecraft.entity.Entity;
+import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.entity.passive.EntityVillager;
+import net.minecraft.network.PacketBuffer;
+import net.minecraft.network.play.client.C07PacketPlayerDigging;
+import net.minecraft.network.play.client.C08PacketPlayerBlockPlacement;
+import net.minecraft.network.play.client.C09PacketHeldItemChange;
+import net.minecraft.network.play.client.C0FPacketConfirmTransaction;
+import net.minecraft.network.play.client.C17PacketCustomPayload;
+import net.minecraft.util.BlockPos;
+import net.minecraft.util.EnumFacing;
+import scala.tools.nsc.backend.icode.Members;
+import leader.Leader;
+import leader.enums.BlinkModules;
+import leader.enums.FloatModules;
+import leader.event.EventTarget;
+import leader.event.types.EventType;
+import leader.event.types.Priority;
+import leader.events.*;
+import leader.module.Module;
+import leader.module.modules.combat.KillAura;
+import leader.module.modules.misc.Disabler;
+import leader.property.properties.BooleanProperty;
+import leader.property.properties.IntProperty;
+import leader.property.properties.ModeProperty;
+import leader.property.properties.PercentProperty;
+import leader.util.*;
+import net.minecraft.item.ItemBow;
+import net.minecraft.item.ItemFood;
+import net.minecraft.item.ItemPotion;
+import net.minecraft.item.ItemSword;
+
+public class NoSlow extends Module {
+    private static final Minecraft mc = Minecraft.getMinecraft();
+    public final ModeProperty swordMode = new ModeProperty("Sword Mode", 1, new String[]{"None", "Vanilla", "BlinkSemi","Prediction","PredictionSemi","Test"});
+    public final BooleanProperty tick0 = new BooleanProperty("Tick 0", true, () -> swordMode.getValue() == 4);
+    public final BooleanProperty tick1 = new BooleanProperty("Tick 1", true, () -> swordMode.getValue() == 4);
+    public final BooleanProperty tick2 = new BooleanProperty("Tick 2", false, () -> swordMode.getValue() == 4);
+    public final BooleanProperty tick3 = new BooleanProperty("Tick 3", false, () -> swordMode.getValue() == 4);
+    public final BooleanProperty tick4 = new BooleanProperty("Tick 4", false, () -> swordMode.getValue() == 4);
+    public final BooleanProperty slowOnRelease = new BooleanProperty("SlowOnRelease",true,() -> this.swordMode.getValue() == 3);
+    public final IntProperty swapDelay = new IntProperty("Slow Delay", 0, 0, 3, () -> swordMode.getValue() == 3);
+    public final PercentProperty swordMotion = new PercentProperty("Sword Motion", 100, () -> this.swordMode.getValue() != 0);
+    public final BooleanProperty swordSprint = new BooleanProperty("Sword Sprint", true, () -> this.swordMode.getValue() != 0);
+    public final BooleanProperty onlyKillAuraAutoBlock = new BooleanProperty("Only Kill Aura Auto Block", false, () -> this.swordMode.getValue() != 0);
+    public final ModeProperty foodMode = new ModeProperty("Food Mode", 0, new String[]{"None", "Vanilla", "Float"});
+    public final PercentProperty foodMotion = new PercentProperty("Food Motion", 100, () -> this.foodMode.getValue() != 0);
+    public final BooleanProperty foodSprint = new BooleanProperty("Food Sprint", true, () -> this.foodMode.getValue() != 0);
+    public final ModeProperty bowMode = new ModeProperty("Bow Mode", 0, new String[]{"None", "Vanilla", "Float"});
+    public final PercentProperty bowMotion = new PercentProperty("Bow Motion", 100, () -> this.bowMode.getValue() != 0);
+    public final BooleanProperty bowSprint = new BooleanProperty("Bow Sprint", true, () -> this.bowMode.getValue() != 0);
+    public final BooleanProperty grim30 = new BooleanProperty("Grim30", false);
+    private int usingItemTicks;
+    private int lastSlot = -1;
+    private int delay = 0;
+    private int blinkDelay = 0;
+    private boolean swapped = false;
+
+    public NoSlow() {
+        super("NoSlow", false);
+    }
+
+    public boolean isSwordActive() {
+        return this.swordMode.getValue() != 0 && ItemUtil.isHoldingSword() && (!this.onlyKillAuraAutoBlock.getValue() || this.isKillAuraAutoBlocking());
+    }
+
+    public boolean isFoodActive() {
+        return this.foodMode.getValue() != 0 && ItemUtil.isEating();
+    }
+
+    public boolean isBowActive() {
+        return this.bowMode.getValue() != 0 && ItemUtil.isUsingBow();
+    }
+
+    private boolean isGrim30Item() {
+        if (!mc.thePlayer.isUsingItem() || mc.thePlayer.getHeldItem() == null) {
+            return false;
+        }
+        return mc.thePlayer.getHeldItem().getItem() instanceof ItemSword
+                || mc.thePlayer.getHeldItem().getItem() instanceof ItemFood
+                || mc.thePlayer.getHeldItem().getItem() instanceof ItemPotion
+                || mc.thePlayer.getHeldItem().getItem() instanceof ItemBow;
+    }
+
+    public boolean isFloatMode() {
+        return this.foodMode.getValue() == 2 && ItemUtil.isEating()
+                || this.bowMode.getValue() == 2 && ItemUtil.isUsingBow();
+    }
+
+    private boolean isKillAuraAutoBlocking() {
+        KillAura aura = (KillAura) Leader.moduleManager.modules.get(KillAura.class);
+        if (!aura.shouldAutoBlock() || !aura.isEnabled()) {
+            return false;
+        }
+        return aura.isBlocking;
+    }
+
+    public boolean isAnyActive() {
+        if (this.grim30.getValue() && this.isGrim30Item()) {
+            return true;
+        }
+        if (this.swordMode.getValue() != 2 && this.swordMode.getValue() != 3 && this.swordMode.getValue() != 4 && this.swordMode.getValue() != 5) {
+            return mc.thePlayer.isUsingItem() && (this.isSwordActive() || this.isFoodActive() || this.isBowActive());
+        } else if (this.swordMode.getValue() == 2 && isSwordActive()) {
+            return blinkDelay == 2;
+        } else if (swordMode.getValue() == 3 && isSwordActive()) {
+            KillAura killAura = (KillAura) Leader.moduleManager.getModule(KillAura.class);
+            if (!slowOnRelease.getValue() || killAura.blockTick != 0) {
+                return delay == 0;
+            }
+        } else if (this.swordMode.getValue() == 4 && isSwordActive()) {
+            KillAura killAura = (KillAura) Leader.moduleManager.getModule(KillAura.class);
+            return killAura.isEnabled() && killAura.shouldAutoBlock()
+                && ((tick0.getValue() && killAura.blockTick == 0)
+                    || (tick1.getValue() && killAura.blockTick == 1)
+                    || (tick2.getValue() && killAura.blockTick == 2)
+                    || (tick3.getValue() && killAura.blockTick == 3)
+                    || (tick4.getValue() && killAura.blockTick == 4));
+        }else if (this.swordMode.getValue() == 5 && isSwordActive()) {
+           return !swapped;
+        }
+        return false;
+    }
+
+    public boolean canSprint() {
+        return this.grim30.getValue() && this.isGrim30Item()
+            || this.isSwordActive() && this.swordSprint.getValue()
+                || this.isFoodActive() && this.foodSprint.getValue()
+                || this.isBowActive() && this.bowSprint.getValue();
+    }
+
+    public int getMotionMultiplier() {
+        if (ItemUtil.isHoldingSword()) {
+            return this.swordMotion.getValue();
+        } else if (ItemUtil.isEating()) {
+            return this.foodMotion.getValue();
+        } else {
+            return ItemUtil.isUsingBow() ? this.bowMotion.getValue() : 100;
+        }
+    }
+
+    @EventTarget
+    public void onUpdate(UpdateEvent event) {
+        if (!this.isEnabled()) return;
+        KillAura killAura = (KillAura) Leader.moduleManager.getModule(KillAura.class);
+        if (isSwordActive() && PlayerUtil.isUsingItem()) {
+            if (this.swordMode.getValue() == 3) {
+                if (event.getType() == EventType.PRE) {
+                    delay--;
+                    if (delay < 0) {
+                        if (!this.slowOnRelease.getValue() || killAura.blockTick != 0) {
+                            int handle = mc.thePlayer.inventory.currentItem;
+                            PacketUtil.sendPacket(new C09PacketHeldItemChange(Disabler.getAltSlot(handle)));
+                            PacketUtil.sendPacket(new C09PacketHeldItemChange(handle % 7 + 2));
+                            PacketUtil.sendPacket(new C09PacketHeldItemChange(handle));
+                        }
+                        delay = swapDelay.getValue();
+                    }
+                }
+            }
+            if (this.swordMode.getValue() == 2) {
+                if (event.getType() == EventType.PRE) {
+                    if (blinkDelay == 2) {
+                        int randomSlot = Disabler.getSwapSlot();
+                        PacketUtil.sendPacket(new C09PacketHeldItemChange(randomSlot));
+                        PacketUtil.sendPacket(new C09PacketHeldItemChange(mc.thePlayer.inventory.currentItem));
+                        PacketUtil.sendPacket(new C07PacketPlayerDigging(C07PacketPlayerDigging.Action.RELEASE_USE_ITEM, BlockPos.ORIGIN, EnumFacing.DOWN));
+                        mc.thePlayer.stopUsingItem();
+                        blinkDelay = 0;
+                    }
+                    else {
+                        if (!isKillAuraAutoBlocking() && blinkDelay == 0) {
+                            Leader.blinkManager.setBlinkState(false, BlinkModules.AUTO_BLOCK);
+                            ((IAccessorPlayerControllerMP) mc.playerController).callSyncCurrentPlayItem();
+                            PacketUtil.sendPacket(new C08PacketPlayerBlockPlacement(mc.thePlayer.getHeldItem()));
+                            mc.thePlayer.setItemInUse(mc.thePlayer.getHeldItem(),mc.thePlayer.getHeldItem().getMaxItemUseDuration());
+                            Leader.blinkManager.setBlinkState(true, BlinkModules.AUTO_BLOCK);
+                        }
+                        blinkDelay++;
+                    }
+                }
+            }
+            if (this.swordMode.getValue() == 5) {
+                int handle = mc.thePlayer.inventory.currentItem;
+                if (swapped){
+                    swapped = false;
+                    PacketUtil.sendPacket(new C09PacketHeldItemChange(handle));
+                    return;
+                }
+                PacketUtil.sendPacket(new C09PacketHeldItemChange(Disabler.getAltSlot(handle)));
+                swapped = true;
+            }
+        }
+        else
+        {
+            if (this.swordMode.getValue() == 5) {
+                int handle = mc.thePlayer.inventory.currentItem;
+                if (swapped){
+                    swapped = false;
+                    PacketUtil.sendPacket(new C09PacketHeldItemChange(handle));
+                    return;
+                }
+            }
+            if (blinkDelay >= 0 && this.swordMode.getValue() == 2) {
+                Leader.blinkManager.setBlinkState(false, BlinkModules.AUTO_BLOCK);
+                blinkDelay = -1;
+            }
+        }
+    }
+    @EventTarget
+    public void onLivingUpdate(LivingUpdateEvent event) {
+        if (!this.isEnabled()) {
+            this.usingItemTicks = 0;
+            return;
+        }
+
+        if (this.grim30.getValue() && this.isGrim30Item()) {
+            this.usingItemTicks++;
+            if (mc.thePlayer.moveForward > 0.0F) {
+                mc.thePlayer.setSprinting(true);
+            }
+        } else {
+            this.usingItemTicks = 0;
+        }
+
+        if (this.isAnyActive()) {
+            float multiplier = (float) this.getMotionMultiplier() / 100.0F;
+            mc.thePlayer.movementInput.moveForward *= multiplier;
+            mc.thePlayer.movementInput.moveStrafe *= multiplier;
+            if (!this.canSprint()) {
+                mc.thePlayer.setSprinting(false);
+            }
+        }
+    }
+
+    @EventTarget
+    public void onPacket(PacketEvent event) {
+        if (!this.isEnabled() || !this.grim30.getValue() || event.getType() != EventType.SEND) {
+            return;
+        }
+
+        if (event.getPacket() instanceof C0FPacketConfirmTransaction && this.isGrim30Item()) {
+            event.setCancelled(true);
+        }
+    }
+
+    @EventTarget(Priority.LOW)
+    public void onPlayerUpdate(PlayerUpdateEvent event) {
+        if (this.isEnabled() && this.isFloatMode()) {
+            int item = mc.thePlayer.inventory.currentItem;
+            if (this.lastSlot != item && PlayerUtil.isUsingItem()) {
+                this.lastSlot = item;
+                Leader.floatManager.setFloatState(true, FloatModules.NO_SLOW);
+            }
+        } else {
+            this.lastSlot = -1;
+            Leader.floatManager.setFloatState(false, FloatModules.NO_SLOW);
+        }
+    }
+
+    @EventTarget
+    public void onRightClick(RightClickMouseEvent event) {
+        if (this.isEnabled() && this.grim30.getValue() && this.isGrim30Item()
+                && this.usingItemTicks % 2 == 1 && !mc.thePlayer.onGround) {
+            event.setCancelled(true);
+        }
+        if (this.isEnabled()) {
+            if (mc.objectMouseOver != null) {
+                switch (mc.objectMouseOver.typeOfHit) {
+                    case BLOCK:
+                        BlockPos blockPos = mc.objectMouseOver.getBlockPos();
+                        if (BlockUtil.isInteractable(blockPos) && !PlayerUtil.isSneaking()) {
+                            return;
+                        }
+                        break;
+                    case ENTITY:
+                        Entity entityHit = mc.objectMouseOver.entityHit;
+                        if (entityHit instanceof EntityVillager) {
+                            return;
+                        }
+                        if (entityHit instanceof EntityLivingBase && TeamUtil.isShop((EntityLivingBase) entityHit)) {
+                            return;
+                        }
+                }
+            }
+            if (this.isFloatMode() && !Leader.floatManager.isPredicted() && mc.thePlayer.onGround) {
+                event.setCancelled(true);
+                mc.thePlayer.motionY = 0.42F;
+            }
+        }
+    }
+
+    @Override
+    public String[] getSuffix() {
+        return new String[]{CaseFormat.UPPER_UNDERSCORE.to(CaseFormat.UPPER_CAMEL, this.swordMode.getModeString())};
+    }
+}
