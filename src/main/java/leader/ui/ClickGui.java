@@ -234,7 +234,8 @@ public class ClickGui extends GuiScreen {
         if (!configFile.exists()) return;
         try (FileReader reader = new FileReader(configFile)) {
             JsonObject json = new JsonParser().parse(reader).getAsJsonObject();
-            if (!json.has("version") || json.get("version").getAsInt() != CONFIG_VERSION) return;
+            // v1 stores the same per-category x/y/open fields without a version.
+            if (json.has("version") && json.get("version").getAsInt() != CONFIG_VERSION) return;
             for (CategoryComponent cat : categoryList) {
                 if (json.has(cat.getName())) {
                     JsonObject pos = json.getAsJsonObject(cat.getName());

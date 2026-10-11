@@ -6,6 +6,7 @@ import leader.Leader;
 import leader.event.EventManager;
 import leader.event.types.EventType;
 import leader.events.PacketEvent;
+import leader.util.PacketUtil;
 import net.minecraft.network.NetworkManager;
 import net.minecraft.network.Packet;
 import net.minecraft.network.play.INetHandlerPlayClient;
@@ -46,6 +47,12 @@ public abstract class MixinNetworkManager {
             cancellable = true
     )
     private void sendPacket(Packet<?> packet, CallbackInfo callbackInfo) {
+        if (PacketUtil.isSendingDirect()) {
+            if (Leader.playerStateManager != null) {
+                Leader.playerStateManager.handlePacket(packet);
+            }
+            return;
+        }
         if (!packet.getClass().getName().startsWith("net.minecraft.network.play.server")) {
             PacketEvent event = new PacketEvent(EventType.SEND, packet);
             EventManager.call(event);
@@ -79,6 +86,12 @@ public abstract class MixinNetworkManager {
             GenericFutureListener<? extends Future<? super Void>>[] arr,
             CallbackInfo callbackInfo
     ) {
+        if (PacketUtil.isSendingDirect()) {
+            if (Leader.playerStateManager != null) {
+                Leader.playerStateManager.handlePacket(packet);
+            }
+            return;
+        }
         if (!packet.getClass().getName().startsWith("net.minecraft.network.play.server")) {
             if (Leader.playerStateManager != null && Leader.blinkManager != null && Leader.lagManager != null) {
                 if (!Leader.lagManager.isFlushing()) {

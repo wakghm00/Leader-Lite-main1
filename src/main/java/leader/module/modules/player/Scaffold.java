@@ -75,6 +75,8 @@ public class Scaffold extends Module {
     public final IntProperty speedLimitTicks = new IntProperty("Speed Limit Ticks", 3, 0, 5, () -> mode.getValue() == 1 && speedLimit.getValue());
     public final IntProperty forwardRotationTicks = new IntProperty("Forward Rotation Ticks", 1, 1, 5, () -> mode.getValue() == 1 && speedLimit.getValue());
     public final IntProperty legitSneakDelay = new IntProperty("Legit Sneak Delay", 4, 1, 5, () -> mode.getValue() == 3);
+    public final BooleanProperty legacyLegit = new BooleanProperty("Legacy Legit", false, () -> mode.getValue() == 3);
+    public final IntProperty legitPlaceDuration = new IntProperty("Legit Place Time", 4, 2, 5, () -> mode.getValue() == 3 && legacyLegit.getValue());
     public final FloatProperty forwardSpeed = new FloatProperty("ForwardSpeed", 180.0F, 1.0F, 180.0F, () -> mode.getValue() == 4);
     public final FloatProperty backSpeed = new FloatProperty("BackSpeed", 180.0F, 1.0F, 180.0F, () -> mode.getValue() == 4);
     public final FloatProperty placeSpeed = new FloatProperty("PlaceSpeed", 180.0F, 1.0F, 180.0F, () -> mode.getValue() == 4);
@@ -113,6 +115,7 @@ public class Scaffold extends Module {
     private int legitEdgeState = 0;
     private int legitEdgeTimer = 0;
     private boolean legitWasOnEdge = false;
+    private boolean legacyLegitActive = false;
     private int legitTellyPhase = 0;
     private int legitTellyPhaseTicks = 0;
     private boolean legitTellyWasAirborne = false;
@@ -302,6 +305,12 @@ public class Scaffold extends Module {
         float nextYaw = fromYaw + RotationUtil.clampAngle(yawDelta, yawStep);
         float nextPitch = fromPitch + RotationUtil.clampAngle(pitchDelta, pitchStep);
         return new float[]{RotationUtil.quantizeAngle(nextYaw), RotationUtil.quantizeAngle(MathHelper.clamp_float(nextPitch, -90.0F, 90.0F))};
+    }
+
+    private void resetLegitEdgeCycle() {
+        this.legitEdgeState = 0;
+        this.legitEdgeTimer = 0;
+        this.legitWasOnEdge = false;
     }
 
     private void resetLegitTellyCycle() {
@@ -526,6 +535,9 @@ public class Scaffold extends Module {
             boolean legitTellyMode = this.isLegitTellyMode();
             boolean tellyLikeMode = tellyMode || legitTellyMode;
             boolean legitMode = this.mode.getValue() == 3;
+            boolean legacyLegitMode = legitMode && this.legacyLegit.getValue();
+            if (!legitMode || this.legacyLegitActive != legacyLegitMode) this.resetLegitEdgeCycle();
+            this.legacyLegitActive = legacyLegitMode;
 
             if (this.rotationTick > 0) this.rotationTick--;
             if (this.forwardRotateTicksLeft > 0) this.forwardRotateTicksLeft--;
@@ -579,12 +591,36 @@ public class Scaffold extends Module {
                 else if (atEdge && holdingBlock) {
                     switch (this.legitEdgeState) {
                         case 0: if (justReachedEdge || this.legitEdgeTimer == 0) { this.legitEdgeState = 1; this.legitEdgeTimer = this.legitSneakDelay.getValue(); } break;
-                        case 1: this.legitEdgeTimer--; if (this.legitEdgeTimer <= 0) { this.legitEdgeState = 2; this.legitEdgeTimer = 0; } break;
-                        case 2: break;
+                        case 1:
+                            this.legitEdgeTimer--;
+                            if (this.legitEdgeTimer <= 0) {
+                                this.legitEdgeState = 2;
+                                this.legitEdgeTimer = legacyLegitMode ? this.legitPlaceDuration.getValue() : 0;
+                            }
+                            break;
+                        case 2:
+                            if (legacyLegitMode && --this.legitEdgeTimer <= 0) {
+                                this.legitEdgeState = 3;
+                                this.legitEdgeTimer = 3 + (int) (Math.random() * 4);
+                            }
+                            break;
+                        case 3:
+                            if (legacyLegitMode && --this.legitEdgeTimer <= 0) {
+                                this.legitEdgeState = 0;
+                                this.legitEdgeTimer = 0;
+                            }
+                            break;
                         default: this.legitEdgeState = 0; this.legitEdgeTimer = 0; break;
                     }
                 } else { this.legitEdgeState = 0; this.legitEdgeTimer = 0; }
                 this.legitWasOnEdge = atEdge;
+                if (legacyLegitMode) {
+                    float backwardYaw = this.getCurrentYaw() - 180.0F;
+                    this.yaw = onGround ? backwardYaw
+                            : RotationUtil.quantizeAngle(RotationUtil.wrapAngleDiff(backwardYaw, event.getYaw()));
+                    this.pitch = RotationUtil.quantizeAngle(85.0F);
+                    this.canRotate = true;
+                }
             }
 
             if (this.canPlace()) {
@@ -615,7 +651,7 @@ public class Scaffold extends Module {
                 float diagonalYaw = this.isDiagonal(currentYaw) ? yawDiffTo180
                         : RotationUtil.wrapAngleDiff(currentYaw - 135.0F * ((currentYaw + 180.0F) % 90.0F < 45.0F ? 1.0F : -1.0F), event.getYaw());
 
-                if (!this.canRotate) {
+                if (!this.canRotate && !legacyLegitMode) {
                     switch (this.rotationMode.getValue()) {
                         case 1: this.yaw = this.yaw == -180.0F && this.pitch == 0.0F ? RotationUtil.quantizeAngle(diagonalYaw) : RotationUtil.quantizeAngle(diagonalYaw); break;
                         case 2: if (this.yaw == -180.0F && this.pitch == 0.0F) { this.yaw = RotationUtil.quantizeAngle(yawDiffTo180); this.pitch = RotationUtil.quantizeAngle(85.0F); } else this.yaw = RotationUtil.quantizeAngle(yawDiffTo180); break;
@@ -629,7 +665,7 @@ public class Scaffold extends Module {
                 if (this.mode.getValue() == 2 && snapForward) blockData = null;
 
                 if (blockData != null) {
-                    if (this.rotationMode.getValue() == 4) {
+                    if (this.rotationMode.getValue() == 4 && !legacyLegitMode) {
                         double centerX = blockData.blockPos().getX() + 0.5 + blockData.facing().getDirectionVec().getX() * 0.5;
                         double centerY = blockData.blockPos().getY() + 0.5 + blockData.facing().getDirectionVec().getY() * 0.5;
                         double centerZ = blockData.blockPos().getZ() + 0.5 + blockData.facing().getDirectionVec().getZ() * 0.5;
@@ -642,7 +678,7 @@ public class Scaffold extends Module {
                             this.canRotate = true;
                             hitVec = strictMop.hitVec;
                         }
-                    } else if (this.rotationMode.getValue() == 5) {
+                    } else if (this.rotationMode.getValue() == 5 && !legacyLegitMode) {
                         float diagYaw = this.quantizeDiagonal(this.getCurrentYaw() + 180.0F);
                         float tolerance = this.godBridgeTolerance.getValue();
                         double centerX = blockData.blockPos().getX() + 0.5 + blockData.facing().getDirectionVec().getX() * 0.5;
@@ -706,7 +742,7 @@ public class Scaffold extends Module {
                         } else if (!mc.thePlayer.onGround && this.airRescue.getValue()) {
                             hitVec = this.applyRescueRotation(blockData, event);
                         }
-                    } else if (this.rotationMode.getValue() == 3) {
+                    } else if (this.rotationMode.getValue() == 3 && !legacyLegitMode) {
                         double[] offsets = {0.1, 0.3, 0.5, 0.7, 0.9};
                         double[] x = offsets, y = offsets, z = offsets;
                         switch (blockData.facing()) {
@@ -775,12 +811,12 @@ public class Scaffold extends Module {
                     }
                 }
 
-                if (blockData != null && hitVec == null && !mc.thePlayer.onGround && this.airRescue.getValue()) {
+                if (!legacyLegitMode && blockData != null && hitVec == null && !mc.thePlayer.onGround && this.airRescue.getValue()) {
                     hitVec = this.applyRescueRotation(blockData, event);
                 }
 
                 if (this.canRotate && MoveUtil.isForwardPressed() && Math.abs(MathHelper.wrapAngleTo180_float(yawDiffTo180 - this.yaw)) < 90.0F) {
-                    if (this.rotationMode.getValue() == 2) this.yaw = RotationUtil.quantizeAngle(yawDiffTo180);
+                    if (this.rotationMode.getValue() == 2 && !legacyLegitMode) this.yaw = RotationUtil.quantizeAngle(yawDiffTo180);
                 }
 
                 if (!legitMode && this.rotationMode.getValue() != 0 && this.mode.getValue() != 2) {
@@ -837,7 +873,7 @@ public class Scaffold extends Module {
                     if (Math.abs(yawDiff) > tolerance) { float clampedYaw = RotationUtil.clampAngle(yawDiff, tolerance); targetYaw = RotationUtil.quantizeAngle(event.getYaw() + clampedYaw); this.rotationTick = Math.max(this.rotationTick, 1); }
                     event.setRotation(targetYaw, targetPitch, 3);
                     if (this.moveFix.getValue() == 1) event.setPervRotation(targetYaw, 3);
-                } else if (legitMode && this.rotationMode.getValue() != 0 && this.canRotate) {
+                } else if (legitMode && (legacyLegitMode || this.rotationMode.getValue() != 0) && this.canRotate) {
                     float targetYaw = this.yaw, targetPitch = this.pitch;
                     float yawDiff = MathHelper.wrapAngleTo180_float(targetYaw - event.getYaw());
                     float tolerance = this.legitModeSpeed.getValue();
@@ -1167,7 +1203,8 @@ public class Scaffold extends Module {
         this.animBps = 0.0F; this.animPercent = 0.0F; this.lastHudFrame = 0L;
         this.snapForward = true; this.snapForwardTimer = 0; this.snapLocked = false; this.airTicks = 0;
         this.pendingSpeedLimitRot = false; this.forwardRotateTicksLeft = 0;
-        this.legitEdgeState = 0; this.legitEdgeTimer = 0; this.legitWasOnEdge = false;
+        this.resetLegitEdgeCycle();
+        this.legacyLegitActive = false;
         this.legitTellyPhase = 0; this.legitTellyPhaseTicks = 0;
         this.legitTellyWasAirborne = false;
         this.legitTellyPlacedFirstBlock = false;
@@ -1176,8 +1213,18 @@ public class Scaffold extends Module {
         this.legitTellySilentPitch = mc.thePlayer != null ? mc.thePlayer.rotationPitch : 82.0F;
     }
 
+    @EventTarget
+    public void onLoadWorld(LoadWorldEvent event) {
+        this.resetLegitEdgeCycle();
+        this.legacyLegitActive = false;
+        this.placeDelayCounter = 0;
+    }
+
     @Override
     public void onDisabled() {
+        this.resetLegitEdgeCycle();
+        this.legacyLegitActive = false;
+        this.placeDelayCounter = 0;
         this.clutchReset();
         this.restoreCtrlTelly();
         if (mc.thePlayer != null && this.lastSlot != -1) mc.thePlayer.inventory.currentItem = this.lastSlot;

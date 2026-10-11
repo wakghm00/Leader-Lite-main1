@@ -55,6 +55,18 @@ public class HUD extends Module {
     public final BooleanProperty toggleAlerts = new BooleanProperty("toggle-alerts", false);
     public final BooleanProperty bgColor = new BooleanProperty("bg-color", false);
     public final BooleanProperty glow = new BooleanProperty("glow", false);
+    public final BooleanProperty legacyBlur = new BooleanProperty("Legacy Blur", false);
+    public final BooleanProperty blur = new BooleanProperty("blur", false, legacyBlur::getValue);
+    public final IntProperty blurIterations = new IntProperty("blur-iterations", 2, 1, 8, () -> legacyBlur.getValue() && blur.getValue());
+    public final IntProperty blurOffset = new IntProperty("blur-offset", 3, 1, 10, () -> legacyBlur.getValue() && blur.getValue());
+
+    private void addBlurMask(Runnable mask) {
+        if (!legacyBlur.getValue()) {
+            ShaderElement.addBlurTask(mask);
+        } else if (blur.getValue()) {
+            ShaderElement.addBlurTask(mask, blurIterations.getValue(), blurOffset.getValue());
+        }
+    }
     public final IntProperty barless = new IntProperty("barless", 0, 0, 8, () -> this.showBar.getValue());
     public final ModeProperty barMode = new ModeProperty("bar-mode", 0, new String[]{"RIGHT", "LEFT", "TOP", "BOTTOM"}, () -> this.showBar.getValue());
 
@@ -283,7 +295,7 @@ public class HUD extends Module {
                     final float blurX2 = bgX2;
                     final float blurY2 = bgY2;
                     final float sc = this.scale.getValue();
-                    ShaderElement.addBlurTask(() -> {
+                    addBlurMask(() -> {
                         GlStateManager.pushMatrix();
                         GlStateManager.scale(sc, sc, 1.0F);
                         RenderUtil.enableRenderState();

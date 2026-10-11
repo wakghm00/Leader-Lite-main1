@@ -52,6 +52,7 @@ public class Config {
             }
 
             JsonObject jsonObject = parsed.getAsJsonObject();
+            migrateLegacyProperties(jsonObject);
             for (Module module : Leader.moduleManager.modules.values()) {
                 JsonElement moduleObj = jsonObject.get(module.getName());
                 if (moduleObj != null && moduleObj.isJsonObject()) {
@@ -102,6 +103,68 @@ public class Config {
             ((IAccessorMinecraft) mc).getLogger().error("Error loading config: " + e.getMessage());
             ChatUtil.sendFormatted(String.format("%sConfig couldn't be loaded (&c&o%s&r)&r", Leader.clientName, file.getName()));
         }
+    }
+
+    static void migrateLegacyProperties(JsonObject root) {
+        JsonObject backTrack = moduleObject(root, "BackTrack");
+        if (backTrack != null && !backTrack.has("Mode")
+                && (backTrack.has("TrackMS") || backTrack.has("Max Track Range")
+                || backTrack.has("Ray Trance") || backTrack.has("Smart"))) {
+            backTrack.addProperty("Mode", "Legacy");
+        }
+
+        JsonObject scaffold = moduleObject(root, "Scaffold");
+        if (scaffold != null && scaffold.has("Legit Place Time") && !scaffold.has("Legacy Legit")) {
+            scaffold.addProperty("Legacy Legit", true);
+        }
+
+        JsonObject aura = moduleObject(root, "KillAura");
+        if (aura != null && aura.has("LagMode") && !aura.has("LagClass")) {
+            String oldMode = aura.get("LagMode").getAsString();
+            switch (oldMode) {
+                case "2Tick", "3Tick", "4Tick", "5Tick" -> {
+                    aura.addProperty("LagClass", "Tick");
+                    if (!aura.has("TickMode")) aura.addProperty("TickMode", oldMode);
+                }
+                case "3Tick + 2Tick" -> aura.addProperty("LagClass", "Combo");
+                case "Swap" -> {
+                    aura.addProperty("LagClass", "Swap");
+                    if (!aura.has("SwapMode")) aura.addProperty("SwapMode", "Legacy Swap");
+                }
+            }
+        }
+
+        JsonObject speed = moduleObject(root, "Speed");
+        if (speed != null && !speed.has("mode")) speed.addProperty("mode", "Normal");
+
+        JsonObject velocity = moduleObject(root, "Velocity");
+        if (velocity != null && !velocity.has("Legacy Behavior") && !velocity.has("AirPush")
+                && (velocity.has("Ground Delay") || velocity.has("Delay Till On Ground")
+                || velocity.has("Force Delay Rising To Falling"))) {
+            velocity.addProperty("Legacy Behavior", true);
+        }
+
+        JsonObject watermark = moduleObject(root, "Watermark");
+        if (watermark != null && !watermark.has("Legacy Style")) {
+            watermark.addProperty("Legacy Style", true);
+        }
+
+        JsonObject targetHud = moduleObject(root, "TargetHUD");
+        if (targetHud != null && !targetHud.has("scoreboard-health")) {
+            targetHud.addProperty("scoreboard-health", false);
+        }
+
+        for (String name : new String[]{"HUD", "Notification", "Potion", "TargetHUD"}) {
+            JsonObject object = moduleObject(root, name);
+            if (object != null && object.has("blur") && !object.has("Legacy Blur")) {
+                object.addProperty("Legacy Blur", true);
+            }
+        }
+    }
+
+    private static JsonObject moduleObject(JsonObject root, String name) {
+        JsonElement object = root.get(name);
+        return object != null && object.isJsonObject() ? object.getAsJsonObject() : null;
     }
 
     public void save() {

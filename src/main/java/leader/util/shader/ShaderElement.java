@@ -10,6 +10,42 @@ import java.util.ArrayList;
 public class ShaderElement {
     private static final ArrayList<Runnable> tasks = new ArrayList<>();
     private static final ArrayList<Runnable> bloomTasks = new ArrayList<>();
+    private static final ArrayList<BlurTask> independentBlurTasks = new ArrayList<>();
+
+    public static final class BlurTask {
+        public final int iterations;
+        public final int offset;
+        public final ArrayList<Runnable> masks = new ArrayList<>();
+
+        private BlurTask(int iterations, int offset) {
+            this.iterations = iterations;
+            this.offset = offset;
+        }
+    }
+
+    public static ArrayList<BlurTask> getIndependentBlurTasks() {
+        return independentBlurTasks;
+    }
+
+    public static void addBlurTask(Runnable context, int iterations, int offset) {
+        iterations = Math.max(1, Math.min(8, iterations));
+        offset = Math.max(1, Math.min(10, offset));
+        for (BlurTask task : independentBlurTasks) {
+            if (task.iterations == iterations && task.offset == offset) {
+                task.masks.add(context);
+                return;
+            }
+        }
+        BlurTask task = new BlurTask(iterations, offset);
+        task.masks.add(context);
+        independentBlurTasks.add(task);
+    }
+
+    public static void clearTasks() {
+        tasks.clear();
+        bloomTasks.clear();
+        independentBlurTasks.clear();
+    }
 
     public static ArrayList<Runnable> getTasks() {
         return tasks;

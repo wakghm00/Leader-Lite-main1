@@ -2,6 +2,7 @@ package leader.module.modules.render;
 
 import leader.module.Module;
 import leader.property.properties.BooleanProperty;
+import leader.property.properties.FloatProperty;
 import leader.property.properties.ModeProperty;
 import leader.util.FontRender;
 
@@ -13,6 +14,7 @@ public class FontManager extends Module {
             "Inter", "NotoSans", "NotoSansSC", "Nursultan",
             "ProductSans", "SF Display", "SF Rounded B", "SF Rounded M", "SF Rounded R"
     });
+    public static final FloatProperty fontSize = new FloatProperty("FontSize", 18.0F, 10.0F, 30.0F);
     private static int lastFontMode = -1;
 
     public FontManager() {
@@ -36,13 +38,18 @@ public class FontManager extends Module {
         }
     }
 
+    // Custom font sizes retain their proportions relative to the global 18-point default.
+    private static float scaleSize(float size) {
+        return customFont.getValue() ? size * fontSize.getValue() / 18.0F : size;
+    }
+
     public static void drawString(String text, float x, float y, int color, boolean shadow) {
         drawString(text, x, y, color, shadow, 18.0F);
     }
 
     public static void drawString(String text, float x, float y, int color, boolean shadow, float size) {
         syncFontMode();
-        FontRender.drawString(text, x, y, color, shadow, size, customFont.getValue());
+        FontRender.drawString(text, x, y, color, shadow, scaleSize(size), customFont.getValue());
     }
 
     public static void drawStringWithShadow(String text, float x, float y, int color) {
@@ -51,7 +58,7 @@ public class FontManager extends Module {
 
     public static void drawStringWithShadow(String text, float x, float y, int color, float size) {
         syncFontMode();
-        FontRender.drawStringWithShadow(text, x, y, color, size, customFont.getValue());
+        FontRender.drawStringWithShadow(text, x, y, color, scaleSize(size), customFont.getValue());
     }
 
     public static int getStringWidth(String text) {
@@ -60,7 +67,7 @@ public class FontManager extends Module {
 
     public static int getStringWidth(String text, float size) {
         syncFontMode();
-        return FontRender.getStringWidth(text, size, customFont.getValue());
+        return FontRender.getStringWidth(text, scaleSize(size), customFont.getValue());
     }
 
     public static int getFontHeight() {
@@ -69,16 +76,16 @@ public class FontManager extends Module {
 
     public static int getFontHeight(float size) {
         syncFontMode();
-        return FontRender.getFontHeight(size, customFont.getValue());
+        return FontRender.getFontHeight(scaleSize(size), customFont.getValue());
     }
 
     public static float getBaseline(float size) {
         syncFontMode();
-        return FontRender.getBaseline(size, customFont.getValue());
+        return FontRender.getBaseline(scaleSize(size), customFont.getValue());
     }
 
     public static float getCapHeight(float size) {
         syncFontMode();
-        return FontRender.getCapHeight(size, customFont.getValue());
+        return FontRender.getCapHeight(scaleSize(size), customFont.getValue());
     }
 }

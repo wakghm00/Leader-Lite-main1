@@ -38,6 +38,19 @@ public class Notification extends Module {
     public final FloatProperty fontScale = new FloatProperty("font-scale", 1.0F, 0.7F, 1.5F);
     public final IntProperty offsetX = new IntProperty("offset-x", 2, 0, 255);
     public final IntProperty offsetY = new IntProperty("offset-y", 20, 0, 255);
+    public final BooleanProperty legacyBlur = new BooleanProperty("Legacy Blur", false);
+    public final BooleanProperty blur = new BooleanProperty("blur", false, legacyBlur::getValue);
+    public final IntProperty blurIterations = new IntProperty("blur-iterations", 2, 1, 8, () -> legacyBlur.getValue() && blur.getValue());
+    public final IntProperty blurOffset = new IntProperty("blur-offset", 3, 1, 10, () -> legacyBlur.getValue() && blur.getValue());
+
+    private void addBlurMask(Runnable mask) {
+        if (!legacyBlur.getValue()) {
+            ShaderElement.addBlurTask(mask);
+        } else if (blur.getValue()) {
+            ShaderElement.addBlurTask(mask, blurIterations.getValue(), blurOffset.getValue());
+        }
+    }
+
     public final BooleanProperty pixelIcon = new BooleanProperty("pixel-icon", true, () -> this.style.getValue() == 2);
     public final BooleanProperty pixelBlink = new BooleanProperty("pixel-blink", true, () -> this.style.getValue() == 2);
     public final BooleanProperty scanlines = new BooleanProperty("scanlines", true, () -> this.style.getValue() == 2);
@@ -150,7 +163,7 @@ public class Notification extends Module {
             final float sc = this.scale.getValue();
             final float bx = x;
             final float by = y;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.enableRenderState();
@@ -277,7 +290,7 @@ public class Notification extends Module {
             final float sc = this.scale.getValue();
             final float bx = x;
             final float by = y;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + cardWidth, by + cardHeight, radius, -1);
@@ -405,7 +418,7 @@ public class Notification extends Module {
             final float sc = this.scale.getValue();
             final float bx = x;
             final float by = y;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.enableRenderState();
@@ -582,7 +595,7 @@ public class Notification extends Module {
             final float sc = this.scale.getValue();
             final float bx = x;
             final float by = y;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + cardWidth, by + cardHeight, radius, -1);
@@ -705,7 +718,7 @@ public class Notification extends Module {
             final float bw = cardWidth;
             final float bh = cardHeight;
             final float br = radius;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + bw, by + bh, br, -1);
@@ -831,7 +844,7 @@ public class Notification extends Module {
             final float bw = cardWidth;
             final float bh = cardHeight;
             final float br = radius;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + bw, by + bh, br, -1);
@@ -963,7 +976,7 @@ public class Notification extends Module {
             final float bx = x;
             final float by = y;
             final float bw = cardWidth;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + bw, by + cardHeight, radius, -1);

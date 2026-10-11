@@ -8,6 +8,21 @@ import net.minecraft.network.play.INetHandlerPlayClient;
 
 public class PacketUtil {
     private static final Minecraft mc = Minecraft.getMinecraft();
+    private static final ThreadLocal<Boolean> sendingDirect = ThreadLocal.withInitial(() -> false);
+
+    public static boolean isSendingDirect() {
+        return sendingDirect.get();
+    }
+
+    public static void sendPacketDirect(Packet<?> packet) {
+        boolean previous = sendingDirect.get();
+        sendingDirect.set(true);
+        try {
+            mc.getNetHandler().getNetworkManager().sendPacket(packet, null);
+        } finally {
+            sendingDirect.set(previous);
+        }
+    }
 
     public static void sendPacket(Packet<?> packet) {
         mc.getNetHandler().getNetworkManager().sendPacket(packet);

@@ -52,14 +52,7 @@ public class Notification extends Module {
     }
 
     public static void addNotification(String text, String description, leader.module.modules.render.notification.NoticeMode noticeMode) {
-        entries.add(new NotificationEntry(text, description, noticeMode, System.currentTimeMillis()));
-        Notification notification = (Notification) Leader.moduleManager.modules.get(Notification.class);
-        if (notification != null) {
-            int max = notification.maxAlerts.getValue();
-            while (entries.size() > max) {
-                entries.remove(0);
-            }
-        }
+        leader.module.modules.render.notification.Notification.addNotification(text, description, noticeMode);
     }
 
     private float getAlpha(long now, long start, long dur) {

@@ -3,6 +3,7 @@ package leader.module.modules.render;
 import leader.event.EventTarget;
 import leader.events.Render2DEvent;
 import leader.module.Module;
+import leader.property.properties.BooleanProperty;
 import leader.property.properties.FloatProperty;
 import leader.property.properties.IntProperty;
 import leader.property.properties.ModeProperty;
@@ -39,6 +40,18 @@ public class Potion extends Module {
     public final IntProperty offsetY = new IntProperty("offset-y", 2, 0, 255);
     public final FloatProperty scale = new FloatProperty("scale", 1.0F, 0.5F, 1.5F);
     public final FloatProperty fontScale = new FloatProperty("font-scale", 1.0F, 0.7F, 1.5F);
+    public final BooleanProperty legacyBlur = new BooleanProperty("Legacy Blur", false);
+    public final BooleanProperty blur = new BooleanProperty("blur", false, legacyBlur::getValue);
+    public final IntProperty blurIterations = new IntProperty("blur-iterations", 2, 1, 8, () -> legacyBlur.getValue() && blur.getValue());
+    public final IntProperty blurOffset = new IntProperty("blur-offset", 3, 1, 10, () -> legacyBlur.getValue() && blur.getValue());
+
+    private void addBlurMask(Runnable mask) {
+        if (!legacyBlur.getValue()) {
+            ShaderElement.addBlurTask(mask);
+        } else if (blur.getValue()) {
+            ShaderElement.addBlurTask(mask, blurIterations.getValue(), blurOffset.getValue());
+        }
+    }
 
     public Potion() {
         super("Potion", false);
@@ -163,7 +176,7 @@ public class Potion extends Module {
             final float sc = this.scale.getValue();
             final float bx = x;
             final float by = y;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.enableRenderState();
@@ -255,7 +268,7 @@ public class Potion extends Module {
             final float sc = this.scale.getValue();
             final float bx = x;
             final float by = y;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.enableRenderState();
@@ -347,7 +360,7 @@ public class Potion extends Module {
             final float sc = this.scale.getValue();
             final float bx = x;
             final float by = y;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + cardWidth, by + cardHeight, radius, -1);
@@ -451,7 +464,7 @@ public class Potion extends Module {
             final float bw = cardWidth;
             final float bh = cardHeight;
             final float br = radius;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + bw, by + bh, br, -1);
@@ -544,7 +557,7 @@ public class Potion extends Module {
             final float bw = cardWidth;
             final float bh = cardHeight;
             final float br = radius;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + bw, by + bh, br, -1);
@@ -640,7 +653,7 @@ public class Potion extends Module {
             final float bw = cardWidth;
             final float bh = cardHeight;
             final int mask = liquid.getRGB();
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 RenderUtil.drawRoundedRectWithGl(bx, by, bx + bw, by + bh, radius, mask);

@@ -4,6 +4,7 @@ import leader.Leader;
 import leader.event.EventTarget;
 import leader.events.Render2DEvent;
 import leader.module.Module;
+import leader.property.properties.BooleanProperty;
 import leader.property.properties.FloatProperty;
 import leader.property.properties.IntProperty;
 import leader.property.properties.ModeProperty;
@@ -30,6 +31,7 @@ public class Watermark extends Module {
     private int frameCount = 0;
 
     public final ModeProperty mode = new ModeProperty("mode", 1, new String[]{"CLASSIC", "MODERN", "LUCID"});
+    public final BooleanProperty legacyStyle = new BooleanProperty("Legacy Style", false);
     public final FloatProperty scale = new FloatProperty("scale", 1.0F, 0.5F, 2.0F);
     public final FloatProperty fontScale = new FloatProperty("font-scale", 1.0F, 0.7F, 1.5F);
     public final IntProperty offX = new IntProperty("offset-x", 4, 0, 500);
@@ -102,7 +104,11 @@ public class Watermark extends Module {
             return;
         }
 
-        renderModern(curText, nextText, anim, tc, now, phasePos);
+        if (this.legacyStyle.getValue()) {
+            renderLegacyModern(curText, nextText, anim, tc, now);
+        } else {
+            renderModern(curText, nextText, anim, tc, now, phasePos);
+        }
     }
 
     private void renderLucid(Color themeColor, long now) {
@@ -199,6 +205,80 @@ public class Watermark extends Module {
             RenderUtil.drawRoundedRectWithGl(bx + padX, y + cardH - 2.0F, bx + bw - padX, y + cardH - 1.0F, 0.5F,
                     new Color(ar, ag, ab, 170).getRGB());
             this.drawLucidText(items[i], bx + padX, baseline - 0.5F, textColor, infoSize);
+        }
+
+        GlStateManager.enableDepth();
+        GlStateManager.disableBlend();
+        GlStateManager.popMatrix();
+    }
+
+    private void renderLegacyModern(String curText, String nextText, float anim, Color tc, long now) {
+        float uiScale = this.scale.getValue();
+        float textScale = this.fontScale.getValue();
+
+        // ── Measure text ──
+        float curW = FontManager.getStringWidth(curText) * textScale;
+        float nextW = FontManager.getStringWidth(nextText) * textScale;
+        float textH = FontManager.getFontHeight() * textScale;
+        float textW = curW + (nextW - curW) * anim;
+
+        // ── Layout ──
+        float padX = 12.0F;
+        float padY = 7.0F;
+        float dot = 4.0F;
+        float dotGap = 7.0F;
+        float contentW = dot + dotGap + textW;
+
+        float cardW = padX + contentW + padX;
+        float cardH = padY + textH + padY;
+        float radius = 6.0F;
+
+        // ── Clamp to screen ──
+        ScaledResolution sr = new ScaledResolution(mc);
+        float maxW = sr.getScaledWidth() / uiScale;
+        float maxH = sr.getScaledHeight() / uiScale;
+
+        float x = this.offX.getValue();
+        float y = this.offY.getValue();
+        if (x + cardW > maxW) x = maxW - cardW - 4.0F;
+        if (y + cardH > maxH) y = maxH - cardH - 4.0F;
+        if (x < 4.0F) x = 4.0F;
+        if (y < 4.0F) y = 4.0F;
+
+        // ── Frosted-glass card ──
+        int rimCol = new Color(255, 255, 255, 36).getRGB();
+        int glassCol = new Color(13, 15, 21, 172).getRGB();
+        int tintCol = new Color(tc.getRed(), tc.getGreen(), tc.getBlue(), 14).getRGB();
+        int shineCol = new Color(255, 255, 255, 20).getRGB();
+
+        GlStateManager.pushMatrix();
+        GlStateManager.scale(uiScale, uiScale, 1.0F);
+        RenderUtil.drawRoundedRectWithGl(x, y, x + cardW, y + cardH, radius, rimCol);
+        RenderUtil.drawRoundedRectWithGl(x + 1.0F, y + 1.0F, x + cardW - 1.0F, y + cardH - 1.0F, radius - 1.0F, glassCol);
+        RenderUtil.drawRoundedRectWithGl(x + 1.0F, y + 1.0F, x + cardW - 1.0F, y + cardH - 1.0F, radius - 1.0F, tintCol);
+        RenderUtil.drawRoundedRectWithGl(x + 2.0F, y + 2.0F, x + cardW - 2.0F, y + cardH * 0.45F, radius - 2.0F, shineCol);
+
+        // ── Pulsing theme dot ──
+        float pulse = 0.7F + 0.3F * (float) Math.sin(now * 0.004D);
+        float dotY = y + (cardH - dot) / 2.0F;
+        int dotGlow = new Color(tc.getRed(), tc.getGreen(), tc.getBlue(), (int) (70.0F * pulse)).getRGB();
+        int dotCore = new Color(tc.getRed(), tc.getGreen(), tc.getBlue(), (int) (235.0F * pulse)).getRGB();
+        RenderUtil.drawRoundedRectWithGl(x + padX - 1.5F, dotY - 1.5F, x + padX + dot + 1.5F, dotY + dot + 1.5F, 3.0F, dotGlow);
+        RenderUtil.drawRoundedRectWithGl(x + padX, dotY, x + padX + dot, dotY + dot, 2.0F, dotCore);
+
+        GlStateManager.disableDepth();
+        GlStateManager.enableBlend();
+        GlStateManager.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+
+        float textX = x + padX + dot + dotGap;
+        float baseY = y + (cardH - textH) / 2.0F + 1.0F;
+        float curOffY = -5.0F * anim;
+        int curAlpha = (int) ((1.0F - anim) * 245.0F);
+        drawPhaseText(curText, textX, baseY + curOffY, textScale, curAlpha);
+        if (anim > 0.005F) {
+            float nextOffY = 8.0F - 8.0F * anim;
+            int nextAlpha = (int) (anim * 245.0F);
+            drawPhaseText(nextText, textX, baseY + nextOffY, textScale, nextAlpha);
         }
 
         GlStateManager.enableDepth();
@@ -342,6 +422,12 @@ public class Watermark extends Module {
         GlStateManager.disableDepth();
         GlStateManager.enableBlend();
         GlStateManager.blendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        if (this.legacyStyle.getValue()) {
+            float contentW = curW + (nextW - curW) * anim;
+            float textH = FontManager.getFontHeight() * textScale;
+            int accent = new Color(themeColor.getRed(), themeColor.getGreen(), themeColor.getBlue(), 245).getRGB();
+            RenderUtil.drawLine(x, y + textH + 3.0F, x + contentW, y + textH + 3.0F, 1.5F, accent);
+        }
         drawPhaseText(curText, x, y, textScale, (int) ((1.0F - anim) * 245.0F));
         if (anim > 0.005F) {
             drawPhaseText(nextText, x, y + 7.0F - 7.0F * anim, textScale, (int) (anim * 245.0F));

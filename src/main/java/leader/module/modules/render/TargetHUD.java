@@ -18,6 +18,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Gui;
 import net.minecraft.client.gui.GuiChat;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.multiplayer.WorldClient;
 import net.minecraft.client.network.NetworkPlayerInfo;
 import net.minecraft.client.renderer.GlStateManager;
 import net.minecraft.client.renderer.Tessellator;
@@ -30,6 +31,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
 import net.minecraft.network.play.client.C02PacketUseEntity;
 import net.minecraft.network.play.client.C02PacketUseEntity.Action;
+import net.minecraft.network.play.server.S3CPacketUpdateScore;
 import net.minecraft.util.ResourceLocation;
 import org.lwjgl.opengl.GL11;
 
@@ -40,6 +42,9 @@ import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicInteger;
 
 public class TargetHUD extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
@@ -75,6 +80,18 @@ public class TargetHUD extends Module {
     public final BooleanProperty shadow = new BooleanProperty("shadow", false);
     public final BooleanProperty kaOnly = new BooleanProperty("ka-only", true);
     public final BooleanProperty chatPreview = new BooleanProperty("chat-preview", false);
+    public final BooleanProperty legacyBlur = new BooleanProperty("Legacy Blur", false);
+    public final BooleanProperty blur = new BooleanProperty("blur", false, () -> legacyBlur.getValue() && mode.getValue() >= 2);
+
+    private void addBlurMask(Runnable mask) {
+        if (!legacyBlur.getValue()) {
+            ShaderElement.addBlurTask(mask);
+        } else if (blur.getValue()) {
+            HUD hud = (HUD) Leader.moduleManager.modules.get(HUD.class);
+            ShaderElement.addBlurTask(mask, hud != null ? hud.blurIterations.getValue() : 2,
+                    hud != null ? hud.blurOffset.getValue() : 3);
+        }
+    }
     public final BooleanProperty frostEquip = new BooleanProperty("frost-equip", true, () -> this.mode.getValue() == 6);
     public final BooleanProperty frostLag = new BooleanProperty("frost-lag", true, () -> this.mode.getValue() == 6);
     public final BooleanProperty frostPop = new BooleanProperty("frost-pop", true, () -> this.mode.getValue() == 6);
@@ -89,6 +106,59 @@ public class TargetHUD extends Module {
     private int frostLastHurt = 0;
     private long frostLastFrame = 0L;
     private EntityLivingBase frostFadeTarget = null;
+    public final BooleanProperty scoreboardHealth = new BooleanProperty("scoreboard-health", true);
+    // 其他玩家的真实血量缓存：key = 玩家名，value = 血量（MC 原生半心单位 0-20）
+    // 用 ConcurrentHashMap：包在 netty 线程写入，渲染在主线程读取
+    public static final Map<String, AtomicInteger> playerHealthMap = new ConcurrentHashMap<>();
+    private WorldClient lastWorld = null;
+
+    /**
+     * 每帧把计分板偷到的真实血量回写到其他玩家实体。
+     * 回写之后所有 getHealth() 读到的就是修正值，下游的 /2.0F 换算逻辑无需任何改动。
+     */
+    private void syncScoreboardHealth() {
+        if (!this.scoreboardHealth.getValue() || mc.theWorld == null || mc.thePlayer == null) {
+            return;
+        }
+        // 换世界 / 换服务器时清空，避免把上一局的分数写到同名玩家身上
+        if (this.lastWorld != mc.theWorld) {
+            this.lastWorld = mc.theWorld;
+            playerHealthMap.clear();
+            return;
+        }
+        if (playerHealthMap.isEmpty()) {
+            return;
+        }
+        for (EntityPlayer player : mc.theWorld.playerEntities) {
+            if (player == mc.thePlayer) {
+                continue;
+            }
+            AtomicInteger score = playerHealthMap.get(player.getName());
+            if (score != null) {
+                // Math.max(1, ...)：下限保护，0 血会导致血条与文本渲染异常（与 zen 版一致）
+                player.setHealth((float) Math.max(1, score.get()));
+            }
+        }
+    }
+
+    /**
+     * 目标当前血量（心）。启用计分板血量时按 zen 版行为把原始值 clamp 到 20 半心。
+     */
+    private float getTargetHearts(EntityLivingBase entity) {
+        float raw = entity.getHealth();
+        if (this.scoreboardHealth.getValue()) {
+            raw = Math.min(raw, 20.0F);
+        }
+        return raw / 2.0F + entity.getAbsorptionAmount() / 2.0F;
+    }
+
+    /**
+     * 目标血量上限（心）。启用计分板血量时 clamp 到 10 心，与 getTargetHearts 的口径一致。
+     */
+    private float getTargetMaxHearts(EntityLivingBase entity) {
+        float max = Math.max(entity.getMaxHealth() / 2.0F, 1.0F);
+        return this.scoreboardHealth.getValue() ? Math.min(max, 10.0F) : max;
+    }
 
     private EntityLivingBase resolveTarget() {
         KillAura killAura = (KillAura) Leader.moduleManager.modules.get(KillAura.class);
@@ -220,6 +290,8 @@ public class TargetHUD extends Module {
             return;
         }
 
+        this.syncScoreboardHealth();
+
         EntityLivingBase targetEntity = this.resolveTarget();
         if (targetEntity == null || targetEntity == mc.thePlayer) {
             return;
@@ -232,9 +304,8 @@ public class TargetHUD extends Module {
     private void updateTargetState(EntityLivingBase targetEntity) {
         EntityLivingBase previousTarget = this.target;
         this.target = targetEntity;
-        float health = (mc.thePlayer.getHealth() + mc.thePlayer.getAbsorptionAmount()) / 2.0F;
         float abs = targetEntity.getAbsorptionAmount() / 2.0F;
-        float heal = targetEntity.getHealth() / 2.0F + abs;
+        float heal = this.getTargetHearts(targetEntity);
         if (targetEntity != previousTarget) {
             this.headTexture = null;
             this.animTimer.setTime();
@@ -243,7 +314,7 @@ public class TargetHUD extends Module {
             this.lastObservedHealth = heal;
             this.hitParticles.clear();
         }
-        this.maxHealth = Math.max(targetEntity.getMaxHealth() / 2.0F, 1.0F);
+        this.maxHealth = this.getTargetMaxHearts(targetEntity);
         if (!Float.isNaN(this.lastObservedHealth)
                 && heal < this.lastObservedHealth - 0.001F
                 && this.mode.getValue() == 3) {
@@ -272,7 +343,7 @@ public class TargetHUD extends Module {
         String targetNameText = TeamUtil.stripName(targetEntity);
         float targetNameWidth = this.getTextWidth(targetNameText);
         float abs = targetEntity.getAbsorptionAmount() / 2.0F;
-        float heal = targetEntity.getHealth() / 2.0F + abs;
+        float heal = this.getTargetHearts(targetEntity);
         String healthText = ChatColors.formatColor(String.format("&r&f%s%s❤&r", healthFormat.format(heal), abs > 0.0F ? "&6" : "&c"));
         float healthTextWidth = this.getTextWidth(healthText);
         String statusText = ChatColors.formatColor(String.format("&r&l%s&r", heal == (mc.thePlayer.getHealth() + mc.thePlayer.getAbsorptionAmount()) / 2.0F ? "D" : (heal < (mc.thePlayer.getHealth() + mc.thePlayer.getAbsorptionAmount()) / 2.0F ? "W" : "L")));
@@ -401,12 +472,13 @@ public class TargetHUD extends Module {
     @EventTarget
     public void onRender(Render2DEvent event) {
         if (this.isEnabled() && mc.thePlayer != null && this.position.getValue() == 0) {
+            this.syncScoreboardHealth();
             EntityLivingBase entityLivingBase = this.target;
             this.target = this.resolveTarget();
             if (this.target != null) {
                 float health = (mc.thePlayer.getHealth() + mc.thePlayer.getAbsorptionAmount()) / 2.0F;
                 float abs = this.target.getAbsorptionAmount() / 2.0F;
-                float heal = this.target.getHealth() / 2.0F + abs;
+                float heal = this.getTargetHearts(this.target);
                 if (this.target != entityLivingBase) {
                     this.headTexture = null;
                     this.animTimer.setTime();
@@ -415,7 +487,7 @@ public class TargetHUD extends Module {
                     this.lastObservedHealth = heal;
                     this.hitParticles.clear();
                 }
-                this.maxHealth = Math.max(this.target.getMaxHealth() / 2.0F, 1.0F);
+                this.maxHealth = this.getTargetMaxHearts(this.target);
                 if (!Float.isNaN(this.lastObservedHealth)
                         && heal < this.lastObservedHealth - 0.001F
                         && this.mode.getValue() == 3) {
@@ -592,7 +664,7 @@ public class TargetHUD extends Module {
             final float bw = barWidth;
             final float bh = barHeight;
             final float sc = this.scale.getValue();
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 GlStateManager.translate(bx, by, -450.0F);
@@ -717,7 +789,7 @@ public class TargetHUD extends Module {
             final float bh = cardHeight;
             final float sc = this.scale.getValue();
             final float r = radius;
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 GlStateManager.translate(bx, by, -450.0F);
@@ -930,7 +1002,7 @@ public class TargetHUD extends Module {
             final float bw = cardWidth;
             final float bh = cardHeight;
             final float sc = this.scale.getValue();
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 GlStateManager.translate(bx, by, -450.0F);
@@ -1086,7 +1158,7 @@ public class TargetHUD extends Module {
             final float bw = cardWidth;
             final float bh = cardHeight;
             final float sc = this.scale.getValue();
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 GlStateManager.translate(bx, by, -450.0F);
@@ -1289,7 +1361,7 @@ public class TargetHUD extends Module {
             final float by = posY;
             final float sc = this.scale.getValue();
             final int mask = new Color(accent.getRed(), accent.getGreen(), accent.getBlue(), 255).getRGB();
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 GlStateManager.translate(bx, by, -450.0F);
@@ -1551,7 +1623,7 @@ public class TargetHUD extends Module {
             final float bw = cardWidth;
             final float bh = cardHeight;
             final float sc = this.scale.getValue();
-            ShaderElement.addBlurTask(() -> {
+            addBlurMask(() -> {
                 GlStateManager.pushMatrix();
                 GlStateManager.scale(sc, sc, 1.0F);
                 GlStateManager.translate(bx, by, -450.0F);
@@ -1778,6 +1850,26 @@ public class TargetHUD extends Module {
                 this.lastAttackTimer.reset();
                 this.lastTarget = (EntityLivingBase) entity;
             }
+        }
+
+        // 接收计分板更新包，偷取其他玩家的真实血量（移植自 zen 版 TargetHud）
+        if (this.scoreboardHealth.getValue()
+                && event.getType() == EventType.RECEIVE
+                && event.getPacket() instanceof S3CPacketUpdateScore) {
+            if (mc.theWorld == null || mc.thePlayer == null) {
+                return;
+            }
+            S3CPacketUpdateScore scorePacket = (S3CPacketUpdateScore) event.getPacket();
+            String objective = scorePacket.getObjectiveName();
+            if (!"health".equals(objective) && !"belowHealth".equals(objective)) {
+                return;
+            }
+            String owner = scorePacket.getPlayerName();
+            // 自己的血量始终用 mc.thePlayer.getHealth()，不进缓存
+            if (owner == null || owner.equals(mc.thePlayer.getName())) {
+                return;
+            }
+            playerHealthMap.computeIfAbsent(owner, key -> new AtomicInteger()).set(scorePacket.getScoreValue());
         }
     }
 

@@ -63,9 +63,9 @@ public class Leader {
         EventManager.register(moduleManager);
         EventManager.register(commandManager);
         moduleManager.modules.put(Telly.class, new Telly());
-        moduleManager.modules.put(AutoGapple.class, new AutoGapple());
         moduleManager.modules.put(Animations.class, new Animations());
         moduleManager.modules.put(AutoProjectiles.class, new AutoProjectiles());
+        moduleManager.modules.put(AutoGapple.class, new AutoGapple());
         moduleManager.modules.put(AimAssist.class, new AimAssist());
         moduleManager.modules.put(AntiAFK.class, new AntiAFK());
         moduleManager.modules.put(AntiDebuff.class, new AntiDebuff());
@@ -120,7 +120,8 @@ public class Leader {
         moduleManager.modules.put(LongJump.class, new LongJump());
         moduleManager.modules.put(MCF.class, new MCF());
         moduleManager.modules.put(NameTags.class, new NameTags());
-        moduleManager.modules.put(Notification.class, new Notification());
+        moduleManager.modules.put(leader.module.modules.render.notification.Notification.class,
+                new leader.module.modules.render.notification.Notification());
         moduleManager.modules.put(Watermark.class, new Watermark());
         moduleManager.modules.put(Potion.class, new Potion());
         moduleManager.modules.put(NickHider.class, new NickHider());
@@ -139,6 +140,7 @@ public class Leader {
         moduleManager.modules.put(Spammer.class, new Spammer());
         moduleManager.modules.put(Speed.class, new Speed());
         moduleManager.modules.put(SpeedMine.class, new SpeedMine());
+        moduleManager.modules.put(HealthBypass.class, new HealthBypass());
         moduleManager.modules.put(Sprint.class, new Sprint());
         moduleManager.modules.put(Stasis.class, new Stasis());
         moduleManager.modules.put(TeamIV.class, new TeamIV());

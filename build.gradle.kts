@@ -20,9 +20,8 @@ val jarName: String by project
 val transformerFile = file("src/main/resources/accesstransformer.cfg")
 // Toolchains:
 java {
-    // Java 17 is required to compile against viaversion 5.x (Java 17 bytecode);
-    // the final jar is downgraded to Java 8 by JvmDowngrader (see downgradeJar below).
-    toolchain.languageVersion.set(JavaLanguageVersion.of(17))
+    // The final jar is downgraded to Java 8 by JvmDowngrader (see downgradeJar below).
+    toolchain.languageVersion.set(JavaLanguageVersion.of(21))
 }
 // Minecraft configuration:
 loom {
@@ -47,7 +46,6 @@ loom {
         pack200Provider.set(dev.architectury.pack200.java.Pack200Adapter())
         // If you don't want mixins, remove this lines
         mixinConfig("mixins.$modid.json")
-        // ViaForge skid: second mixin config
         mixinConfig("mixins.viaforge.json")
 	    if (transformerFile.exists()) {
 			println("Installing access transformer")
@@ -66,7 +64,6 @@ sourceSets.main {
 repositories {
     mavenCentral()
     maven("https://repo.spongepowered.org/maven/")
-    // ViaForge skid: viaversion 5.x artifacts
     maven("https://repo.viaversion.com")
     // If you don't want to log in with your real minecraft account, remove this line
     maven("https://pkgs.dev.azure.com/djtheredstoner/DevAuth/_packaging/public/maven/v1")
@@ -86,23 +83,22 @@ dependencies {
     // If you don't want to log in with your real minecraft account, remove this line
     runtimeOnly("me.djtheredstoner:DevAuth-forge-legacy:1.2.1")
 
-    // === ViaForge skid: viaversion family, shaded into the jar ===
+    // Compile-time netty API (runtime uses the one bundled with 1.8.9)
+    compileOnly("io.netty:netty-all:4.2.2.Final")
+
     shadowImpl("com.viaversion:viaversion-common:5.8.0")
     shadowImpl("com.viaversion:viabackwards-common:5.8.0")
     shadowImpl("com.viaversion:viarewind-common:4.0.15")
     shadowImpl("com.viaversion:viaaprilfools-common:4.1.0")
     shadowImpl("net.raphimc:ViaLegacy:3.0.14") {
-        // Minecraft 1.8.9 ships its own gson
         exclude(group = "com.google.code.gson", module = "gson")
     }
-    // slf4j is relocated below so it doesn't clash with Minecraft's bundled 1.7.x
     shadowImpl("org.slf4j:slf4j-api:2.0.17")
-    // compile-time netty API (runtime uses the one bundled with 1.8.9)
-    compileOnly("io.netty:netty-all:4.2.2.Final")
 }
 // Tasks:
 tasks.withType(JavaCompile::class) {
     options.encoding = "UTF-8"
+    options.release.set(17)
 }
 tasks.withType(org.gradle.jvm.tasks.Jar::class) {
     archiveBaseName.set(jarName)
@@ -147,11 +143,9 @@ tasks.shadowJar {
     }
     // If you want to include other dependencies and shadow them, you can relocate them in here
     fun relocate(name: String) = relocate(name, "$baseGroup.deps.$name")
-    // ViaForge skid: relocate slf4j to avoid clashes with Minecraft 1.8.9's bundled slf4j 1.7.x
     relocate("org.slf4j", "com.viaversion.viaforge.libs.slf4j")
 }
-// JvmDowngrader: viaversion 5.x libs are Java 17 bytecode; downgrade the final
-// (already remapped) jar to Java 8 so it runs on a 1.8.9 client.
+// Downgrade the final (already remapped) jar to Java 8 for Minecraft 1.8.9.
 tasks.named<DowngradeJar>("downgradeJar") {
     inputFile.set(tasks.named<net.fabricmc.loom.task.RemapJarTask>("remapJar").get().archiveFile)
 }

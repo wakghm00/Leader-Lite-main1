@@ -54,6 +54,7 @@ public class Velocity extends Module {
     public final BooleanProperty testMode = new BooleanProperty("TestMode",false, () -> this.mode.getValue() == 1 && this.reduce.getValue() && reduceMode.getValue() == 0);
     private final IntProperty stopBlockHurtTime = new IntProperty("StopBlockHurtTime",2,0,10, () -> this.mode.getValue() == 1 && this.reduce.getValue() && reduceMode.getValue() == 0 && testMode.getValue());
     public final BooleanProperty airPush = new BooleanProperty("AirPush", false, () -> this.mode.getValue() == 1 && this.reduce.getValue());
+    public final BooleanProperty legacyBehavior = new BooleanProperty("Legacy Behavior", false);
 
     public final BooleanProperty jump = new BooleanProperty("Jump", true, () -> mode.getValue() == 1 || mode.getValue() == 2);
     public final BooleanProperty delay = new BooleanProperty("Delay", false, () -> mode.getValue() == 1 || mode.getValue() == 2);
@@ -176,7 +177,8 @@ public class Velocity extends Module {
                 if (mode.getValue() == 1 && smartTimes.getValue()){
                     hitCount = computeReduceTicks((int) event.getX(), (int) event.getZ());
                 }
-                if (delay.getValue() && event.getY() > 0.0){
+                if (delay.getValue() && event.getY() > 0.0
+                        && (!legacyBehavior.getValue() || (!groundDelay.getValue() && mc.thePlayer.onGround))){
                     if (jump.getValue() && (this.mode.getValue() == 1 || this.mode.getValue() == 2) && !mc.thePlayer.isBurning()){
                         jumpFlag = true;
                     }
@@ -603,7 +605,7 @@ public class Velocity extends Module {
 
     private void applyHitSlowDown(boolean respectKeepSprint) {
         HitSlowDownEvent hitSlowDownEvent = (HitSlowDownEvent) EventManager.call(new HitSlowDownEvent());
-        if (mc.thePlayer.isSprinting()) {
+        if (legacyBehavior.getValue() || mc.thePlayer.isSprinting()) {
             mc.thePlayer.motionX *= hitSlowDownEvent.getSlowDown();
             mc.thePlayer.motionZ *= hitSlowDownEvent.getSlowDown();
             if (!hitSlowDownEvent.getSprint() && (!respectKeepSprint || !keepSprint.getValue())) {

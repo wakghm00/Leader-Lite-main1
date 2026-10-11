@@ -4,7 +4,6 @@ import leader.Leader;
 import leader.event.EventManager;
 import leader.events.Render2DEvent;
 import leader.module.modules.render.NickHider;
-import leader.module.modules.render.Shaders;
 import leader.util.shader.ShaderElement;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraftforge.client.GuiIngameForge;
@@ -30,12 +29,7 @@ public abstract class MixinGuiIngameForge {
     )
     private void renderGameOverlay(float float1, CallbackInfo callbackInfo) {
         if (Leader.moduleManager != null) {
-            Shaders shaders = (Shaders) Leader.moduleManager.modules.get(Shaders.class);
-            if (shaders != null && shaders.isEnabled()) {
-                shaders.renderShaders();
-            } else {
-                ShaderElement.getTasks().clear();
-            }
+            ShaderElement.clearTasks();
         }
         EventManager.call(new Render2DEvent(float1));
     }

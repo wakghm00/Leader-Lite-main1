@@ -10,7 +10,7 @@
   {
     "modid": "viaforge",
     "name": "ViaForge",
-    "description": "Client-side ViaVersion implementation for MinecraftForge (skidded into Leader Lite)",
+    "description": "Client-side ViaVersion implementation for MinecraftForge",
     "version": "4.4.0",
     "mcversion": "[1.8.8,)",
     "url": "https://github.com/ViaVersion/ViaForge",
