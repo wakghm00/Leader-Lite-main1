@@ -11,6 +11,7 @@ import leader.module.modules.misc.AntiDebuff;
 import leader.module.modules.player.AutoBlockIn;
 import leader.module.modules.player.GhostHand;
 import leader.module.modules.player.Scaffold;
+import leader.module.modules.player.Scaffold2;
 import leader.module.modules.render.NoHurtCam;
 import leader.module.modules.render.ViewClip;
 import net.minecraft.block.Block;
@@ -62,6 +63,15 @@ public abstract class MixinEntityRenderer {
                     this.mc.thePlayer.inventory.currentItem = slot;
                 }
             }
+            Scaffold2 scaffold2 = (Scaffold2) Leader.moduleManager.modules.get(Scaffold2.class);
+            if (scaffold2.isEnabled() && scaffold2.itemSpoof.getValue()) {
+                int slot = scaffold2.getSlot();
+                if (slot >= 0) {
+                    this.slot = new Box<>(this.mc.thePlayer.inventory.currentItem);
+                    this.mc.thePlayer.inventory.currentItem = slot;
+                }
+            }
+
             KillAura killAura = (KillAura) Leader.moduleManager.modules.get(KillAura.class);
             if (killAura.isEnabled() && killAura.isBlocking()) {
                 this.using = new Box<>(((IAccessorEntityPlayer) this.mc.thePlayer).getItemInUse());
@@ -99,6 +109,15 @@ public abstract class MixinEntityRenderer {
         Scaffold scaffold = (Scaffold) Leader.moduleManager.modules.get(Scaffold.class);
         if (scaffold.isEnabled() && scaffold.itemSpoof.getValue()) {
             int slot = scaffold.getSlot();
+            if (slot >= 0) {
+                this.slot = new Box<>(this.mc.thePlayer.inventory.currentItem);
+                this.mc.thePlayer.inventory.currentItem = slot;
+            }
+        }
+
+        Scaffold2 scaffold2 = (Scaffold2) Leader.moduleManager.modules.get(Scaffold2.class);
+        if (scaffold2.isEnabled() && scaffold2.itemSpoof.getValue()) {
+            int slot = scaffold2.getSlot();
             if (slot >= 0) {
                 this.slot = new Box<>(this.mc.thePlayer.inventory.currentItem);
                 this.mc.thePlayer.inventory.currentItem = slot;

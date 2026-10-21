@@ -3,6 +3,7 @@ package leader.mixin;
 import leader.Leader;
 import leader.module.modules.player.AutoBlockIn;
 import leader.module.modules.player.Scaffold;
+import leader.module.modules.player.Scaffold2;
 import net.minecraft.client.gui.GuiIngame;
 import net.minecraft.entity.player.InventoryPlayer;
 import net.minecraft.item.ItemStack;
@@ -33,6 +34,13 @@ public abstract class MixinGuiIngame {
         AutoBlockIn autoBlockIn = (AutoBlockIn) Leader.moduleManager.modules.get(AutoBlockIn.class);
         if(autoBlockIn.itemSpoof.getValue() && autoBlockIn.isEnabled()){
             int slot = autoBlockIn.getSlot();
+            if (slot >= 0) {
+                return inventoryPlayer.getStackInSlot(slot);
+            }
+        }
+        Scaffold2 scaffold2 = (Scaffold2) Leader.moduleManager.modules.get(Scaffold2.class);
+        if (scaffold2.isEnabled() && scaffold2.itemSpoof.getValue()) {
+            int slot = scaffold2.getSlot();
             if (slot >= 0) {
                 return inventoryPlayer.getStackInSlot(slot);
             }

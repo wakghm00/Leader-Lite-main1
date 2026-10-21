@@ -24,7 +24,9 @@ import leader.util.PacketUtil;
 
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashSet;
+import java.util.Set;
 
 public class InvManager extends Module {
     private static final Minecraft mc = Minecraft.getMinecraft();
@@ -36,6 +38,8 @@ public class InvManager extends Module {
     public final BooleanProperty autoOpen = new BooleanProperty("AutoOpen",true, () -> mode.getValue() != 2);
     public final BooleanProperty autoClose = new BooleanProperty("Auto Close", false, () -> mode.getValue() != 2);
     public final BooleanProperty autoArmor = new BooleanProperty("Auto Armor", true);
+    public final BooleanProperty moreArmor = new BooleanProperty("MoreArmor", false, autoArmor::getValue);
+    public final IntProperty moreArmorPairs = new IntProperty("MoreArmorPairs", 1, 1, 6, () -> autoArmor.getValue() && moreArmor.getValue());
     public final BooleanProperty dropTrash = new BooleanProperty("Drop Trash", true);
     public final IntProperty swordSlot = new IntProperty("Sword Slot", 1, 0, 9);
     public final IntProperty pickaxeSlot = new IntProperty("Pickaxe Slot", 8, 0, 9);
@@ -211,6 +215,144 @@ public class InvManager extends Module {
         return -1;
     }
 
+    private boolean isArmorPiece(ItemStack stack, int armorType) {
+        return stack != null && stack.getItem() instanceof ItemArmor
+                && ((ItemArmor) stack.getItem()).armorType == armorType;
+    }
+
+    private boolean isMoreArmorActive() {
+        return this.autoArmor.getValue() && this.moreArmor.getValue();
+    }
+
+    private double getArmorScore(ItemStack stack) {
+        if (stack == null || !(stack.getItem() instanceof ItemArmor)) return -1.0;
+        double durability = 1.0;
+        if (stack.getMaxDamage() > 0) {
+            durability = (double) (stack.getMaxDamage() - stack.getItemDamage()) / (double) stack.getMaxDamage();
+        }
+        // 护甲值优先，剩余耐久用于同护甲值时的取舍
+        return ItemUtil.getArmorProtection(stack) + durability * 0.001;
+    }
+
+    private boolean isArmorDepleted(ItemStack stack) {
+        return stack != null && stack.getMaxDamage() > 0
+                && stack.getMaxDamage() - stack.getItemDamage() <= 0;
+    }
+
+    /**
+     * 整理背包时用于保护护甲的槽位列表（按四种护甲各一项）。
+     * More Armor 开启时护甲保护完全交给 getProtectedArmorSlots，
+     * 这样耐久耗尽或超出保留数量的护甲才能被正常丢弃。
+     */
+    private ArrayList<Integer> getArmorSlotsForTrash(boolean checkDurability) {
+        ArrayList<Integer> slots = new ArrayList<>(Arrays.asList(-1, -1, -1, -1));
+        if (this.isMoreArmorActive()) return slots;
+        for (int i = 0; i < 4; i++) {
+            slots.set(i, ItemUtil.findArmorInventorySlot(i, checkDurability));
+        }
+        return slots;
+    }
+
+    /**
+     * More Armor: 计算背包内需要保留的备用护甲槽位。
+     * 每种护甲（头盔/胸甲/护腿/靴子）按护甲值与剩余耐久排序，保留前 pairs 件。
+     * 若要更换护甲，则多保留一件，保证换装后背包里仍有 pairs 件备用。
+     */
+    private Set<Integer> getProtectedArmorSlots() {
+        Set<Integer> slots = new HashSet<>();
+        if (!this.isMoreArmorActive()) return slots;
+        int pairs = this.moreArmorPairs.getValue();
+        for (int armorType = 0; armorType < 4; armorType++) {
+            int keep = pairs + (this.needsArmorSwap(armorType) ? 1 : 0);
+            ArrayList<Integer> candidates = new ArrayList<>();
+            for (int i = 0; i < 36; i++) {
+                ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
+                // 耐久为 0 的护甲已经没有价值，不再保留
+                if (this.isArmorPiece(stack, armorType) && !this.isArmorDepleted(stack)) {
+                    candidates.add(i);
+                }
+            }
+            candidates.sort((a, b) -> Double.compare(
+                    this.getArmorScore(mc.thePlayer.inventory.getStackInSlot(b)),
+                    this.getArmorScore(mc.thePlayer.inventory.getStackInSlot(a))
+            ));
+            for (int i = 0; i < Math.min(keep, candidates.size()); i++) {
+                slots.add(candidates.get(i));
+            }
+        }
+        return slots;
+    }
+
+    private int findBestArmorBackupSlot(int armorType) {
+        int bestSlot = -1;
+        double bestScore = 0.0;
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
+            if (!this.isArmorPiece(stack, armorType)) continue;
+            if (this.isArmorDepleted(stack)) continue;
+            double score = this.getArmorScore(stack);
+            if (score > bestScore) {
+                bestScore = score;
+                bestSlot = i;
+            }
+        }
+        return bestSlot;
+    }
+
+    /**
+     * More Armor: 判断某个护甲槽是否需要更换。
+     * 所穿护甲耐久耗尽，或背包里有防护更高的备用护甲时返回 true。
+     * 注意这里不使用耐久度参与比较，否则护甲每掉一点耐久都会触发无意义的来回替换。
+     */
+    private boolean needsArmorSwap(int armorType) {
+        if (!this.isMoreArmorActive()) {
+            return false;
+        }
+        int playerArmorSlot = 39 - armorType;
+        int backupSlot = this.findBestArmorBackupSlot(armorType);
+        if (backupSlot == -1) {
+            return false;
+        }
+        ItemStack worn = mc.thePlayer.inventory.getStackInSlot(playerArmorSlot);
+        if (worn == null || this.isArmorDepleted(worn)) {
+            return true;
+        }
+        return ItemUtil.getArmorProtection(mc.thePlayer.inventory.getStackInSlot(backupSlot))
+               > ItemUtil.getArmorProtection(worn);
+    }
+
+    /**
+     * 穿上一件护甲。More Armor 开启时，优先换上背包里最好的备用护甲。
+     * @return 是否执行了操作
+     */
+    private boolean equipArmor(int armorType) {
+        int playerArmorSlot = 39 - armorType;
+        int targetSlot;
+        if (this.isMoreArmorActive()) {
+            if (!this.needsArmorSwap(armorType)) {
+                return false;
+            }
+            targetSlot = this.findBestArmorBackupSlot(armorType);
+        } else {
+            int equippedSlot = ItemUtil.findArmorInventorySlot(armorType, true);
+            int inventorySlot = ItemUtil.findArmorInventorySlot(armorType, false);
+            targetSlot = equippedSlot != -1 ? equippedSlot : inventorySlot;
+            if (targetSlot == -1 || targetSlot == playerArmorSlot) {
+                return false;
+            }
+        }
+        if (mc.thePlayer.inventory.getStackInSlot(playerArmorSlot) != null) {
+            if (mc.thePlayer.inventory.getFirstEmptyStack() != -1) {
+                this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(playerArmorSlot), 0, 1);
+            } else {
+                this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(playerArmorSlot), 1, 4);
+            }
+        } else {
+            this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(targetSlot), 0, 1);
+        }
+        return true;
+    }
+
     private int getTotalThrowsCount() {
         int count = 0;
         for (int i = 0; i < 36; i++) {
@@ -299,9 +441,16 @@ public class InvManager extends Module {
         }
         if (this.autoArmor.getValue()) {
             for (int i = 0; i < 4; i++) {
+                int playerArmorSlot = 39 - i;
+                // More Armor: 所穿护甲耐久耗尽且背包里有备用护甲时，需要打开背包进行替换
+                if (this.isMoreArmorActive()) {
+                    if (this.needsArmorSwap(i)) {
+                        return false;
+                    }
+                    continue;
+                }
                 int equippedSlot = ItemUtil.findArmorInventorySlot(i, true);
                 int inventorySlot = ItemUtil.findArmorInventorySlot(i, false);
-                int playerArmorSlot = 39 - i;
                 if (equippedSlot != -1 || inventorySlot != -1) {
                     if (equippedSlot != playerArmorSlot && inventorySlot != playerArmorSlot) {
                         return false;
@@ -309,7 +458,6 @@ public class InvManager extends Module {
                 }
             }
         }
-
         if (preferredSwordHotbarSlot >= 0 && preferredSwordHotbarSlot <= 8 && (equippedSwordSlot != -1 || inventorySwordSlot != -1)) {
             if (equippedSwordSlot != preferredSwordHotbarSlot && inventorySwordSlot != preferredSwordHotbarSlot)
                 return false;
@@ -347,12 +495,9 @@ public class InvManager extends Module {
         }
 
         if (this.dropTrash.getValue()) {
-            ArrayList<Integer> equippedArmorSlots = new ArrayList<>(Arrays.asList(-1, -1, -1, -1));
-            ArrayList<Integer> inventoryArmorSlots = new ArrayList<>(Arrays.asList(-1, -1, -1, -1));
-            for (int i = 0; i < 4; i++) {
-                equippedArmorSlots.set(i, ItemUtil.findArmorInventorySlot(i, true));
-                inventoryArmorSlots.set(i, ItemUtil.findArmorInventorySlot(i, false));
-            }
+            ArrayList<Integer> equippedArmorSlots = this.getArmorSlotsForTrash(true);
+            ArrayList<Integer> inventoryArmorSlots = this.getArmorSlotsForTrash(false);
+            Set<Integer> protectedArmorSlots = this.getProtectedArmorSlots();
 
             int currentBlockCount = this.getStackSize(inventoryBlocksSlot);
             int totalThrowsCount = this.getTotalThrowsCount();
@@ -360,6 +505,7 @@ public class InvManager extends Module {
             if (totalThrowsCount > this.throwsAmount.getValue()) {
                 for (int i = 0; i < 36; i++) {
                     if (!equippedArmorSlots.contains(i) && !inventoryArmorSlots.contains(i)
+                            && !protectedArmorSlots.contains(i)
                             && equippedSwordSlot != i && inventorySwordSlot != i && secondSwordSlot != i && prefSecondSwordSlot != i
                             && equippedPickaxeSlot != i && inventoryPickaxeSlot != i
                             && equippedShovelSlot != i && inventoryShovelSlot != i
@@ -377,6 +523,7 @@ public class InvManager extends Module {
 
             for (int i = 0; i < 36; i++) {
                 if (!equippedArmorSlots.contains(i) && !inventoryArmorSlots.contains(i)
+                        && !protectedArmorSlots.contains(i)
                         && equippedSwordSlot != i && inventorySwordSlot != i && secondSwordSlot != i && prefSecondSwordSlot != i
                         && equippedPickaxeSlot != i && inventoryPickaxeSlot != i
                         && equippedShovelSlot != i && inventoryShovelSlot != i
@@ -459,12 +606,9 @@ public class InvManager extends Module {
                 }
                 if (this.oDelay <= 0 && (this.mode.getValue() == 1 || this.actionDelay <= 0)) {
                     if (this.isEnabled() && this.isValidGameMode()) {
-                        ArrayList<Integer> equippedArmorSlots = new ArrayList<>(Arrays.asList(-1, -1, -1, -1));
-                        ArrayList<Integer> inventoryArmorSlots = new ArrayList<>(Arrays.asList(-1, -1, -1, -1));
-                        for (int i = 0; i < 4; i++) {
-                            equippedArmorSlots.set(i, ItemUtil.findArmorInventorySlot(i, true));
-                            inventoryArmorSlots.set(i, ItemUtil.findArmorInventorySlot(i, false));
-                        }
+                        ArrayList<Integer> equippedArmorSlots = this.getArmorSlotsForTrash(true);
+                        ArrayList<Integer> inventoryArmorSlots = this.getArmorSlotsForTrash(false);
+                        Set<Integer> protectedArmorSlots = this.getProtectedArmorSlots();
                         int preferredSwordHotbarSlot = this.swordSlot.getValue() - 1;
                         int equippedSwordSlot = ItemUtil.findSwordInInventorySlot(preferredSwordHotbarSlot, true);
                         int inventorySwordSlot = ItemUtil.findSwordInInventorySlot(preferredSwordHotbarSlot, false);
@@ -516,27 +660,12 @@ public class InvManager extends Module {
 
                         if (this.mode.getValue() == 0 || this.mode.getValue() == 2) {
                             if (this.autoArmor.getValue()) {
-                            for (int i = 0; i < 4; i++) {
-                                int equippedSlot = equippedArmorSlots.get(i);
-                                int inventorySlot = inventoryArmorSlots.get(i);
-                                if (equippedSlot != -1 || inventorySlot != -1) {
-                                    int playerArmorSlot = 39 - i;
-                                    if (equippedSlot != playerArmorSlot && inventorySlot != playerArmorSlot) {
-                                        if (mc.thePlayer.inventory.getStackInSlot(playerArmorSlot) != null) {
-                                            if (mc.thePlayer.inventory.getFirstEmptyStack() != -1) {
-                                                this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(playerArmorSlot), 0, 1);
-                                            } else {
-                                                this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(playerArmorSlot), 1, 4);
-                                            }
-                                        } else {
-                                            int armorToEquipSlot = equippedSlot != -1 ? equippedSlot : inventorySlot;
-                                            this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(armorToEquipSlot), 0, 1);
-                                        }
+                                for (int i = 0; i < 4; i++) {
+                                    if (this.equipArmor(i)) {
                                         return;
                                     }
                                 }
                             }
-                        }
                             LinkedHashSet<Integer> usedHotbarSlots = new LinkedHashSet<>();
                             if (preferredSwordHotbarSlot >= 0 && preferredSwordHotbarSlot <= 8 && (equippedSwordSlot != -1 || inventorySwordSlot != -1)) {
                                 usedHotbarSlots.add(preferredSwordHotbarSlot);
@@ -625,6 +754,7 @@ public class InvManager extends Module {
                                 if (totalThrowsCount > this.throwsAmount.getValue()) {
                                     for (int i = 35; i >= 0; i--) {
                                         if (!equippedArmorSlots.contains(i) && !inventoryArmorSlots.contains(i)
+                                                && !protectedArmorSlots.contains(i)
                                                 && equippedSwordSlot != i && inventorySwordSlot != i && secondSwordSlot != i && prefSecondSwordSlot != i && prefSecondSwordSlot != i
                                                 && equippedPickaxeSlot != i && inventoryPickaxeSlot != i
                                                 && equippedShovelSlot != i && inventoryShovelSlot != i
@@ -644,6 +774,7 @@ public class InvManager extends Module {
                                 }
                                 for (int i = 0; i < 36; i++) {
                                     if (!equippedArmorSlots.contains(i) && !inventoryArmorSlots.contains(i)
+                                            && !protectedArmorSlots.contains(i)
                                             && equippedSwordSlot != i && inventorySwordSlot != i && secondSwordSlot != i && prefSecondSwordSlot != i && prefSecondSwordSlot != i
                                             && equippedPickaxeSlot != i && inventoryPickaxeSlot != i
                                             && equippedShovelSlot != i && inventoryShovelSlot != i
@@ -686,23 +817,7 @@ public class InvManager extends Module {
                         } else if (this.mode.getValue() == 1) {
                             if (this.autoArmor.getValue()) {
                                 for (int i = 0; i < 4; i++) {
-                                    int equippedSlot = ItemUtil.findArmorInventorySlot(i, true);
-                                    int inventorySlot = ItemUtil.findArmorInventorySlot(i, false);
-                                    if (equippedSlot != -1 || inventorySlot != -1) {
-                                        int playerArmorSlot = 39 - i;
-                                        if (equippedSlot != playerArmorSlot && inventorySlot != playerArmorSlot) {
-                                            if (mc.thePlayer.inventory.getStackInSlot(playerArmorSlot) != null) {
-                                                if (mc.thePlayer.inventory.getFirstEmptyStack() != -1) {
-                                                    clickSlot(mc.thePlayer.inventoryContainer.windowId, convertSlotIndex(playerArmorSlot), 0, 1);
-                                                } else {
-                                                    clickSlot(mc.thePlayer.inventoryContainer.windowId, convertSlotIndex(playerArmorSlot), 1, 4);
-                                                }
-                                            } else {
-                                                int armorToEquipSlot = equippedSlot != -1 ? equippedSlot : inventorySlot;
-                                                clickSlot(mc.thePlayer.inventoryContainer.windowId, convertSlotIndex(armorToEquipSlot), 0, 1);
-                                            }
-                                        }
-                                    }
+                                    this.equipArmor(i);
                                 }
                             }
                             LinkedHashSet<Integer> usedHotbarSlots = new LinkedHashSet<>();
@@ -824,12 +939,8 @@ public class InvManager extends Module {
                                 }
                             }
                             ArrayList<Integer> itemsToDrop = new ArrayList<>();
-                            ArrayList<Integer> eqArmor = new ArrayList<>(Arrays.asList(-1, -1, -1, -1));
-                            ArrayList<Integer> invArmor = new ArrayList<>(Arrays.asList(-1, -1, -1, -1));
-                            for (int i = 0; i < 4; i++) {
-                                eqArmor.set(i, ItemUtil.findArmorInventorySlot(i, true));
-                                invArmor.set(i, ItemUtil.findArmorInventorySlot(i, false));
-                            }
+                            ArrayList<Integer> eqArmor = this.getArmorSlotsForTrash(true);
+                            ArrayList<Integer> invArmor = this.getArmorSlotsForTrash(false);
                             int eqSwordDrop = ItemUtil.findSwordInInventorySlot(swordSlot.getValue() - 1, true);
                             int invSwordDrop = ItemUtil.findSwordInInventorySlot(swordSlot.getValue() - 1, false);
                             int eqPickDrop = ItemUtil.findInventorySlot("pickaxe", pickaxeSlot.getValue() - 1, true);
@@ -854,6 +965,7 @@ public class InvManager extends Module {
                             if (totalThrowsCount > throwsAmount.getValue()) {
                                 for (int i = 35; i >= 0; i--) {
                                     if (!eqArmor.contains(i) && !invArmor.contains(i)
+                                            && !protectedArmorSlots.contains(i)
                                             && eqSwordDrop != i && invSwordDrop != i && secondSwordSlot != i && prefSecondSwordSlot != i && prefSecondSwordSlot != i
                                             && eqPickDrop != i && invPickDrop != i
                                             && eqShovelDrop != i && invShovelDrop != i
@@ -872,6 +984,7 @@ public class InvManager extends Module {
                             }
                             for (int i = 0; i < 36; i++) {
                                 if (!eqArmor.contains(i) && !invArmor.contains(i)
+                                        && !protectedArmorSlots.contains(i)
                                         && eqSwordDrop != i && invSwordDrop != i && secondSwordSlot != i && prefSecondSwordSlot != i && prefSecondSwordSlot != i
                                         && eqPickDrop != i && invPickDrop != i
                                         && eqShovelDrop != i && invShovelDrop != i

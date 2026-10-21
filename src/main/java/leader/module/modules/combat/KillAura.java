@@ -392,11 +392,6 @@ public class KillAura extends Module {
         }
     }
 
-    private boolean isAutoGappleActive() {
-        Module autoGapple = Leader.moduleManager.modules.get(AutoGapple.class);
-        return autoGapple != null && autoGapple.isEnabled();
-    }
-
     private boolean canAutoBlock() {
         if (Velocity.stoppedBlock){
             return false;

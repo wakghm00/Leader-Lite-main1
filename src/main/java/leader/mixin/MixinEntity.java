@@ -3,6 +3,7 @@ package leader.mixin;
 import leader.Leader;
 import leader.event.EventManager;
 import leader.events.KnockbackEvent;
+import leader.events.MoveEvent;
 import leader.events.SafeWalkEvent;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.entity.Entity;
@@ -75,6 +76,21 @@ public abstract class MixinEntity {
     private void setAngles(CallbackInfo callbackInfo) {
         if ((Entity) ((Object) this) instanceof EntityPlayerSP && Leader.rotationManager != null && Leader.rotationManager.isRotated()) {
             callbackInfo.cancel();
+        }
+    }
+
+    @Inject(
+            method = {"moveEntity"},
+            at = {@At("HEAD")},
+            cancellable = true
+    )
+    private void onMoveEntity(double x, double y, double z, CallbackInfo callbackInfo) {
+        if ((Entity) ((Object) this) instanceof EntityPlayerSP) {
+            MoveEvent event = new MoveEvent();
+            EventManager.call(event);
+            if (event.isCancelled()) {
+                callbackInfo.cancel();
+            }
         }
     }
 
