@@ -111,6 +111,7 @@ public class Leader {
         moduleManager.modules.put(ItemESP.class, new ItemESP());
         moduleManager.modules.put(Jesus.class, new Jesus());
         moduleManager.modules.put(KeepSprint.class, new KeepSprint());
+        moduleManager.modules.put(KeepSprint2.class, new KeepSprint2());
         moduleManager.modules.put(KeepDistance.class, new KeepDistance());
         moduleManager.modules.put(HitBox.class, new HitBox());
         moduleManager.modules.put(AutoGapple.class, new AutoGapple());
@@ -131,6 +132,7 @@ public class Leader {
         moduleManager.modules.put(NoJumpDelay.class, new NoJumpDelay());
         moduleManager.modules.put(NoRotate.class, new NoRotate());
         moduleManager.modules.put(NoSlow.class, new NoSlow());
+        moduleManager.modules.put(NoSlow2.class, new NoSlow2());
         moduleManager.modules.put(Radar.class, new Radar());
         moduleManager.modules.put(Reach.class, new Reach());
         moduleManager.modules.put(Refill.class, new Refill());

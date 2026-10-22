@@ -2,21 +2,24 @@ package leader.module.modules.render;
 
 import leader.Leader;
 import leader.event.EventTarget;
-import leader.events.KeyEvent;
 import leader.events.Render2DEvent;
+import leader.util.FontRender;
 import leader.module.Module;
 import leader.property.Property;
-import leader.property.properties.BooleanProperty;
-import leader.property.properties.FloatProperty;
-import leader.property.properties.IntProperty;
-import leader.property.properties.ModeProperty;
-import leader.property.properties.PercentProperty;
+import leader.property.properties.*;
+import leader.util.ColorUtil;
 import leader.util.KeyBindUtil;
 import leader.util.RenderUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.renderer.GlStateManager;
 import org.lwjgl.input.Keyboard;
+import leader.module.modules.combat.*;
+import leader.module.modules.movement.*;
+import leader.module.modules.player.*;
+import leader.module.modules.misc.*;
+import leader.module.modules.legit.*;
+
 
 import java.awt.Color;
 import java.util.ArrayList;
@@ -24,138 +27,271 @@ import java.util.Arrays;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
-import java.util.Map;
 
 public class TabGui extends Module {
-    private static final Minecraft MC = Minecraft.getMinecraft();
-    private static final int ROW_HEIGHT = 12;
-    private static final int MAX_ROWS = 20;
-    private static final int GAP = 4;
-    private static final int[] WIDTHS = {76, 82, 92, 82};
-    private static final int BACKGROUND = new Color(19, 19, 19, 220).getRGB();
-    private static final int GRAY = new Color(165, 165, 165).getRGB();
+    private static final Minecraft mc = Minecraft.getMinecraft();
+    private static final float START_X = 4.0F;
+    private static final float START_Y = 15.0F;
+    private static final float GAP = 4.0F;
+    private static final int ITEM_HEIGHT = 12;
+    private static final int CATEGORY_WIDTH = 80;
+    private static final int MODULE_WIDTH = 82;
+    private static final int SETTING_WIDTH = 82;
+    private static final int SUB_WIDTH = 79;
+    private static final float TEXT_PADDING = 3.0F;
+    private static final int MAX_VISIBLE_ROWS = 20;
+    private static final int MAX_TEXT_CHARS = 13;
+    private static final Color BACKGROUND_COLOR = new Color(0x13, 0x13, 0x13);
 
-    private final LinkedHashMap<String, List<Module>> categories = new LinkedHashMap<>();
+    private final LinkedHashMap<String, List<Class<? extends Module>>> categories = new LinkedHashMap<>();
+    private final ColumnAnim[] columns = new ColumnAnim[]{new ColumnAnim(), new ColumnAnim(), new ColumnAnim(), new ColumnAnim()};
+
     private int level;
     private int categoryIndex;
     private int moduleIndex;
     private int settingIndex;
-    private int modeIndex;
-    private boolean binding;
-    private boolean upDown;
-    private boolean downDown;
-    private boolean leftDown;
-    private boolean rightDown;
-    private boolean enterDown;
+    private int subIndex;
+    private boolean editingSlider;
+
+    private boolean upWasDown;
+    private boolean downWasDown;
+    private boolean leftWasDown;
+    private boolean rightWasDown;
+    private boolean enterWasDown;
+
+    public final ModeProperty fontMode = new ModeProperty("font-mode", 0, new String[]{"Minecraft", "Modern"});
 
     public TabGui() {
-        super("TabGui", false);
-        rebuildCategories();
+        super("TabGui", false, false);
+        registerCategories();
     }
 
-    private void rebuildCategories() {
-        categories.clear();
-        for (String name : Arrays.asList("Combat", "Movement", "Render", "Player", "Misc", "Legit")) {
-            categories.put(name, new ArrayList<Module>());
-        }
-        if (Leader.moduleManager == null) {
-            return;
-        }
-        for (Module module : Leader.moduleManager.modules.values()) {
-            String packageName = module.getClass().getPackage().getName().toLowerCase(Locale.ROOT);
-            for (String category : categories.keySet()) {
-                if (packageName.endsWith("." + category.toLowerCase(Locale.ROOT))) {
-                    categories.get(category).add(module);
-                    break;
-                }
-            }
-        }
+    private void registerCategories() {
+        categories.put("Combat", Arrays.<Class<? extends Module>>asList(
+                AimAssist.class,
+                AutoClicker.class,
+                KillAura.class,
+                Wtap.class,
+                Velocity.class,
+                Reach.class,
+                TargetStrafe.class,
+                NoHitDelay.class,
+                AntiFireball.class,
+                LagRange.class,
+                HitBox.class,
+                MoreKB.class,
+                BackTrack.class
+        ));
+        categories.put("Movement", Arrays.<Class<? extends Module>>asList(
+                AntiAFK.class,
+                KeepSprint2.class,
+                Fly.class,
+                Speed.class,
+                LongJump.class,
+                Sprint.class,
+                Jesus.class,
+                NoSlow.class,
+                KeepSprint.class,
+                Eagle.class,
+                NoJumpDelay.class,
+                AntiVoid.class,
+                Stasis.class
+        ));
+        categories.put("Render", Arrays.<Class<? extends Module>>asList(
+                Animations.class,
+                ESP.class,
+                Chams.class,
+                FullBright.class,
+                Tracers.class,
+                NameTags.class,
+                Xray.class,
+                TargetHUD.class,
+                Indicators.class,
+                BedESP.class,
+                ItemESP.class,
+                ViewClip.class,
+                NoHurtCam.class,
+                HUD.class,
+                TabGui.class,
+                GuiModule.class,
+                ChestESP.class,
+                Trajectories.class
+        ));
+        categories.put("Player", Arrays.<Class<? extends Module>>asList(
+                AntiDebuff.class,
+                Timer.class,
+                NoRotate.class,
+                Blink.class,
+                NoFall.class,
+                AutoHeal.class,
+                AutoTool.class,
+                AutoSwap.class,
+                ChestAura.class,
+                ChestStealer.class,
+                InvManager.class,
+                InvWalk.class,
+                Scaffold.class,
+                AutoBlockIn.class,
+                SpeedMine.class,
+                FastPlace.class,
+                GhostHand.class,
+                MCF.class
+        ));
+        categories.put("Misc", Arrays.<Class<? extends Module>>asList(
+                Spammer.class,
+                BedNuker.class,
+                BedTracker.class,
+                LightningTracker.class,
+                NickHider.class,
+                AntiObbyTrap.class,
+                AntiObfuscate.class,
+                InventoryClicker.class
+
+        ));
     }
 
-    @EventTarget
-    public void onKey(KeyEvent event) {
-        if (!isEnabled() || !binding) {
-            return;
-        }
-        if (event.getKey() == Keyboard.KEY_ESCAPE) {
-            binding = false;
-        } else if (event.getKey() != Keyboard.KEY_RETURN && event.getKey() != Keyboard.KEY_NUMPADENTER) {
-            Module module = getSelectedModule();
-            if (module != null) {
-                module.setKey(event.getKey());
-            }
-            binding = false;
-        }
+    private FontRenderer getFont() {
+        return mc.fontRendererObj;
     }
 
     @EventTarget
     public void onRender2D(Render2DEvent event) {
-        if (!isEnabled()) {
+        if (!this.isEnabled()) {
             return;
         }
-        rebuildCategories();
-        clampSelections();
-        if (MC.currentScreen == null && !binding) {
+
+        if (mc.currentScreen == null) {
             handleKeyboard();
         }
+        clampSelections();
 
-        FontRenderer font = MC.fontRendererObj;
-        float x = 4.0F;
-        float[] selectedRows = {categoryIndex, moduleIndex, settingIndex + 1, modeIndex};
-        for (int column = 0; column < 4; column++) {
-            List<Row> rows = getRows(column);
-            boolean visible = column == 0 || level >= column;
-            int selected = (int) selectedRows[column];
-            drawColumn(font, x, WIDTHS[column], rows, selected, visible);
-            x += WIDTHS[column] + GAP;
-        }
+        FontRenderer font = getFont();
+        float x = START_X;
+        float y = START_Y;
+
+        List<Row> categoryRows = getCategoryRows();
+        List<Row> moduleRows = getModuleRows();
+        List<Row> settingRows = getSettingRows();
+        List<Row> subRows = getSubRows();
+
+        int categoryStart = scrollStart(categoryIndex, categoryRows.size());
+        int moduleStart = scrollStart(moduleIndex, moduleRows.size());
+        int settingSelectedRow = getSettingsSelectedRow();
+        int settingStart = scrollStart(settingSelectedRow, settingRows.size());
+
+        float categoryColumnY = y;
+        float moduleColumnY = categoryColumnY + Math.max(0, categoryIndex - categoryStart) * ITEM_HEIGHT;
+        float settingColumnY = moduleColumnY + Math.max(0, moduleIndex - moduleStart) * ITEM_HEIGHT;
+        float subColumnY = settingColumnY + Math.max(0, settingSelectedRow - settingStart) * ITEM_HEIGHT;
+
+        drawColumn(font, 0, x, categoryColumnY, CATEGORY_WIDTH, categoryRows, categoryIndex, level == 0, true);
+        x += CATEGORY_WIDTH + GAP;
+        drawColumn(font, 1, x, moduleColumnY, MODULE_WIDTH, moduleRows, moduleIndex, level == 1, level >= 1);
+        x += MODULE_WIDTH + GAP;
+        drawColumn(font, 2, x, settingColumnY, SETTING_WIDTH, settingRows, settingSelectedRow, level == 2, level >= 2 && !settingRows.isEmpty());
+        x += SETTING_WIDTH + GAP;
+        drawColumn(font, 3, x, subColumnY, SUB_WIDTH, subRows, subIndex, level == 3, level >= 3 && !subRows.isEmpty());
     }
 
     private void handleKeyboard() {
-        boolean up = Keyboard.isKeyDown(Keyboard.KEY_UP);
-        boolean down = Keyboard.isKeyDown(Keyboard.KEY_DOWN);
-        boolean left = Keyboard.isKeyDown(Keyboard.KEY_LEFT);
-        boolean right = Keyboard.isKeyDown(Keyboard.KEY_RIGHT);
-        boolean enter = Keyboard.isKeyDown(Keyboard.KEY_RETURN) || Keyboard.isKeyDown(Keyboard.KEY_NUMPADENTER);
-        if (up && !upDown) moveSelection(-1);
-        if (down && !downDown) moveSelection(1);
-        if (left && !leftDown) level = Math.max(0, level - 1);
-        if (right && !rightDown) openOrAdjust(1);
-        if (enter && !enterDown) pressEnter();
-        upDown = up;
-        downDown = down;
-        leftDown = left;
-        rightDown = right;
-        enterDown = enter;
+        boolean upPressed = Keyboard.isKeyDown(Keyboard.KEY_UP);
+        boolean downPressed = Keyboard.isKeyDown(Keyboard.KEY_DOWN);
+        boolean leftPressed = Keyboard.isKeyDown(Keyboard.KEY_LEFT);
+        boolean rightPressed = Keyboard.isKeyDown(Keyboard.KEY_RIGHT);
+        boolean enterPressed = Keyboard.isKeyDown(Keyboard.KEY_RETURN) || Keyboard.isKeyDown(Keyboard.KEY_NUMPADENTER);
+
+        if (editingSlider) {
+            Property<?> property = getSelectedProperty();
+            if (!isSliderProperty(property)) {
+                editingSlider = false;
+            } else {
+                if (leftPressed && !leftWasDown) {
+                    adjustProperty(property, -1);
+                }
+                if (rightPressed && !rightWasDown) {
+                    adjustProperty(property, 1);
+                }
+                if (enterPressed && !enterWasDown) {
+                    editingSlider = false;
+                }
+
+                upWasDown = upPressed;
+                downWasDown = downPressed;
+                leftWasDown = leftPressed;
+                rightWasDown = rightPressed;
+                enterWasDown = enterPressed;
+                return;
+            }
+        }
+
+        if (upPressed && !upWasDown) {
+            moveSelection(-1);
+        }
+        if (downPressed && !downWasDown) {
+            moveSelection(1);
+        }
+        if (leftPressed && !leftWasDown) {
+            if (level > 0) {
+                level--;
+            }
+        }
+        if (rightPressed && !rightWasDown) {
+            openOrAdjust(1);
+        }
+        if (enterPressed && !enterWasDown) {
+            pressEnter();
+        }
+
+        upWasDown = upPressed;
+        downWasDown = downPressed;
+        leftWasDown = leftPressed;
+        rightWasDown = rightPressed;
+        enterWasDown = enterPressed;
     }
 
     private void moveSelection(int direction) {
+        editingSlider = false;
         if (level == 0) {
             categoryIndex = wrap(categoryIndex + direction, categories.size());
-            moduleIndex = settingIndex = modeIndex = 0;
+            moduleIndex = 0;
+            settingIndex = 0;
+            syncSubIndex();
         } else if (level == 1) {
-            moduleIndex = wrap(moduleIndex + direction, getModules().size());
-            settingIndex = modeIndex = 0;
+            moduleIndex = wrap(moduleIndex + direction, getModulesForSelectedCategory().size());
+            settingIndex = 0;
+            syncSubIndex();
         } else if (level == 2) {
-            settingIndex = wrap(settingIndex + direction, getSettings().size() + 1);
-            syncModeIndex();
+            settingIndex = wrap(settingIndex + direction, getSettingsForSelectedModule().size());
+            syncSubIndex();
         } else {
-            modeIndex = wrap(modeIndex + direction, getMode() == null ? 0 : getMode().getModes().length);
+            ModeProperty mode = getSelectedModeProperty();
+            subIndex = wrap(subIndex + direction, mode == null ? 0 : mode.getModes().length);
         }
     }
 
     private void openOrAdjust(int direction) {
         if (level == 0) {
+            editingSlider = false;
             level = 1;
-        } else if (level == 1 && !getSettings().isEmpty()) {
-            level = 2;
-        } else if (level == 2) {
+            return;
+        }
+        if (level == 1) {
+            if (!getSettingsForSelectedModule().isEmpty()) {
+                editingSlider = false;
+                level = 2;
+                settingIndex = 0;
+                syncSubIndex();
+            }
+            return;
+        }
+        if (level == 2) {
             Property<?> property = getSelectedProperty();
             if (property instanceof ModeProperty) {
+                editingSlider = false;
                 level = 3;
-                syncModeIndex();
-            } else {
-                adjust(property, direction);
+                syncSubIndex();
+            } else if (!isSliderProperty(property)) {
+                adjustProperty(property, direction);
             }
         }
     }
@@ -163,163 +299,403 @@ public class TabGui extends Module {
     private void pressEnter() {
         if (level == 1) {
             Module module = getSelectedModule();
-            if (module != null) module.toggle();
-        } else if (level == 2) {
-            if (settingIndex == 0) {
-                binding = true;
-            } else {
-                Property<?> property = getSelectedProperty();
-                if (property instanceof ModeProperty) {
-                    level = 3;
-                    syncModeIndex();
-                } else {
-                    adjust(property, 1);
-                }
-            }
-        } else if (level == 3 && getMode() != null) {
-            getMode().setValue(modeIndex);
-        }
-    }
-
-    private void adjust(Property<?> property, int direction) {
-        if (property == null || !property.isVisible()) return;
-        if (property instanceof BooleanProperty) {
-            BooleanProperty value = (BooleanProperty) property;
-            value.setValue(!value.getValue());
-        } else if (property instanceof IntProperty) {
-            IntProperty value = (IntProperty) property;
-            value.setValue(clamp(value.getValue() + direction, value.getMinimum(), value.getMaximum()));
-        } else if (property instanceof PercentProperty) {
-            PercentProperty value = (PercentProperty) property;
-            value.setValue(clamp(value.getValue() + direction, value.getMinimum(), value.getMaximum()));
-        } else if (property instanceof FloatProperty) {
-            FloatProperty value = (FloatProperty) property;
-            float next = clamp(value.getValue() + direction * 0.1F, value.getMinimum(), value.getMaximum());
-            value.setValue(Math.round(next * 10.0F) / 10.0F);
-        }
-    }
-
-    private List<Row> getRows(int column) {
-        List<Row> rows = new ArrayList<>();
-        if (column == 0) {
-            for (String category : categories.keySet()) rows.add(new Row(category, GRAY));
-        } else if (column == 1) {
-            for (Module module : getModules()) rows.add(new Row(module.getName(), module.isEnabled() ? Color.WHITE.getRGB() : GRAY));
-        } else if (column == 2) {
-            Module module = getSelectedModule();
             if (module != null) {
-                rows.add(new Row("Keybind", KeyBindUtil.getKeyName(module.getKey()), GRAY));
-                for (Property<?> property : getSettings()) {
-                    rows.add(new Row(label(property.getName()), property instanceof BooleanProperty && !((BooleanProperty) property).getValue() ? GRAY : Color.WHITE.getRGB(), property instanceof ModeProperty));
-                }
+                module.toggle();
             }
-        } else {
-            ModeProperty mode = getMode();
-            if (mode != null) for (String value : mode.getModes()) rows.add(new Row(label(value), GRAY));
+            return;
+        }
+        if (level == 2) {
+            Property<?> property = getSelectedProperty();
+            if (property instanceof ModeProperty) {
+                editingSlider = false;
+                level = 3;
+                syncSubIndex();
+            } else if (isSliderProperty(property)) {
+                editingSlider = !editingSlider;
+            } else {
+                adjustProperty(property, 1);
+            }
+            return;
+        }
+        if (level == 3) {
+            ModeProperty mode = getSelectedModeProperty();
+            if (mode != null) {
+                mode.setValue(subIndex);
+            }
+        }
+    }
+
+    private boolean isSliderProperty(Property<?> property) {
+        return property instanceof IntProperty || property instanceof PercentProperty || property instanceof FloatProperty;
+    }
+
+    private void adjustProperty(Property<?> property, int direction) {
+        if (property == null || !property.isVisible()) {
+            return;
+        }
+        if (property instanceof BooleanProperty) {
+            property.setValue(!((BooleanProperty) property).getValue());
+        } else if (property instanceof IntProperty) {
+            IntProperty intProperty = (IntProperty) property;
+            intProperty.setValue(clamp(intProperty.getValue() + direction, intProperty.getMinimum(), intProperty.getMaximum()));
+        } else if (property instanceof PercentProperty) {
+            PercentProperty percentProperty = (PercentProperty) property;
+            percentProperty.setValue(clamp(percentProperty.getValue() + direction, percentProperty.getMinimum(), percentProperty.getMaximum()));
+        } else if (property instanceof FloatProperty) {
+            FloatProperty floatProperty = (FloatProperty) property;
+            float next = clamp(floatProperty.getValue() + 0.1F * direction, floatProperty.getMinimum(), floatProperty.getMaximum());
+            floatProperty.setValue(Math.round(next * 10.0F) / 10.0F);
+        }
+    }
+
+    private List<Row> getCategoryRows() {
+        List<Row> rows = new ArrayList<>();
+        for (String category : categories.keySet()) {
+            rows.add(new Row(category, "", false, new Color(0xAA, 0xAA, 0xAA).getRGB()));
         }
         return rows;
     }
 
-    private void drawColumn(FontRenderer font, float x, int width, List<Row> rows, int selected, boolean visible) {
-        if (!visible) return;
-        int count = Math.min(MAX_ROWS, Math.max(1, rows.size()));
+    private List<Row> getModuleRows() {
+        List<Row> rows = new ArrayList<>();
+        for (Module module : getModulesForSelectedCategory()) {
+            rows.add(new Row(module.getName(), "", false, module.isEnabled() ? Color.WHITE.getRGB() : new Color(165, 165, 165).getRGB()));
+        }
+        return rows;
+    }
+
+    private List<Row> getSettingRows() {
+        List<Row> rows = new ArrayList<>();
+        Module module = getSelectedModule();
+        if (module == null) {
+            return rows;
+        }
+
+        rows.add(new Row("Keybind", KeyBindUtil.getKeyName(module.getKey()), false, new Color(145, 145, 145).getRGB()));
+        for (Property<?> property : getSettingsForSelectedModule()) {
+            boolean hasSub = property instanceof ModeProperty;
+            String name = formatLabel(property.getName()) + (hasSub ? "..." : "");
+            rows.add(new Row(name, hasSub ? "" : formatValue(property), hasSub, propertyTextColor(property)));
+        }
+        return rows;
+    }
+
+    private List<Row> getSubRows() {
+        List<Row> rows = new ArrayList<>();
+        ModeProperty mode = getSelectedModeProperty();
+        if (mode == null) {
+            return rows;
+        }
+
+        String[] modes = mode.getModes();
+        for (int i = 0; i < modes.length; i++) {
+            boolean selected = i == mode.getValue();
+            rows.add(new Row(formatLabel(modes[i]), selected ? "On" : "", false, selected ? Color.WHITE.getRGB() : new Color(170, 170, 170).getRGB()));
+        }
+        return rows;
+    }
+
+    private void drawColumn(FontRenderer font, int columnIndex, float targetX, float y, int width, List<Row> rows, int selected, boolean active, boolean visible) {
+        ColumnAnim anim = columns[columnIndex];
+        float hiddenX = targetX - 6.0F;
+        anim.x = animate(anim.x == 0.0F ? (visible ? targetX : hiddenX) : anim.x, visible ? targetX : hiddenX, 0.24F);
+        anim.alpha = animate(anim.alpha, visible ? 1.0F : 0.0F, 0.24F);
+        if (anim.alpha < 0.015F) {
+            anim.alpha = 0.0F;
+        } else if (anim.alpha > 0.985F) {
+            anim.alpha = 1.0F;
+        }
+        if (anim.alpha <= 0.02F) {
+            return;
+        }
+
+        int count = Math.min(MAX_VISIBLE_ROWS, Math.max(1, rows.size()));
         int start = scrollStart(selected, rows.size());
-        float y = 15.0F;
-        GlStateManager.enableBlend();
-        RenderUtil.drawRect(x, y, x + width, y + count * ROW_HEIGHT, BACKGROUND);
-        int row = selected - start;
-        if (row >= 0 && row < count) RenderUtil.drawRect(x, y + row * ROW_HEIGHT, x + width, y + (row + 1) * ROW_HEIGHT, new Color(70, 130, 220, 210).getRGB());
-        GlStateManager.disableBlend();
+        float height = count * ITEM_HEIGHT;
+        float x = anim.x;
+        int panelAlpha = Math.max(0, Math.min(255, (int) (255.0F * anim.alpha)));
+
+        RenderUtil.enableRenderState();
+        RenderUtil.drawRect(x, y, x + width, y + height, new Color(BACKGROUND_COLOR.getRed(), BACKGROUND_COLOR.getGreen(), BACKGROUND_COLOR.getBlue(), panelAlpha).getRGB());
+        RenderUtil.disableRenderState();
+
+        int visibleSelected = selected - start;
+        if (visibleSelected >= 0 && visibleSelected < count && selected >= 0 && selected < rows.size()) {
+            float targetSelectedY = y + visibleSelected * ITEM_HEIGHT;
+            anim.selectedY = animate(anim.selectedY == 0.0F ? targetSelectedY : anim.selectedY, targetSelectedY, 0.34F);
+            drawSelectedGradient(x, anim.selectedY, width, (int) (255.0F * anim.alpha));
+        }
+
         GlStateManager.disableDepth();
-        for (int i = 0; i < count && start + i < rows.size(); i++) {
-            Row item = rows.get(start + i);
-            int color = start + i == selected ? Color.WHITE.getRGB() : item.color;
-            String text = item.name;
-            if (font.getStringWidth(text) > width - 6) text = font.trimStringToWidth(text, width - 9) + "...";
-            font.drawString(text, x + 3, y + i * ROW_HEIGHT + 2, color, false);
-            if (!item.value.isEmpty()) {
-                String value = font.trimStringToWidth(item.value, width / 2);
-                font.drawString(value, x + width - font.getStringWidth(value) - 3, y + i * ROW_HEIGHT + 2, Color.WHITE.getRGB(), false);
+        for (int i = 0; i < count; i++) {
+            int rowIndex = start + i;
+            if (rowIndex >= rows.size()) {
+                break;
+            }
+
+            Row row = rows.get(rowIndex);
+            boolean selectedRow = rowIndex == selected;
+            int color = selectedRow ? Color.WHITE.getRGB() : row.color;
+            color = swapAlpha(color, ((color >> 24) & 255) * anim.alpha);
+
+            float rowY = y + i * ITEM_HEIGHT;
+            float textY = getCenteredTextY(font, rowY);
+            String value = row.value.isEmpty() ? "" : limitText(font, row.value, width / 2.0F - TEXT_PADDING * 2.0F);
+            float valueWidth = getStringWidth(font, value);
+            String name = limitText(font, row.name, width - TEXT_PADDING * 2.0F - valueWidth);
+
+            drawText(font, name, x + TEXT_PADDING, textY, color);
+            if (!value.isEmpty()) {
+                int valueColor = selectedRow ? Color.WHITE.getRGB() : (row.hasSub ? new Color(205, 205, 205).getRGB() : Color.WHITE.getRGB());
+                drawText(font, value, x + width - valueWidth - TEXT_PADDING, textY, swapAlpha(valueColor, 255.0F * anim.alpha));
             }
         }
         GlStateManager.enableDepth();
     }
 
-    private List<Module> getModules() {
-        if (categories.isEmpty()) return new ArrayList<>();
-        List<String> names = new ArrayList<>(categories.keySet());
-        return categories.get(names.get(categoryIndex));
+    private void drawSelectedGradient(float x, float y, int width, int alpha) {
+        HUD hud = (HUD) Leader.moduleManager.getModule(HUD.class);
+        Color left = hud != null ? new Color(hud.custom1.getValue()) : Color.WHITE;
+        Color right = hud != null ? new Color(hud.custom2.getValue()) : Color.WHITE;
+        RenderUtil.enableRenderState();
+        for (int i = 0; i < width; i++) {
+            float progress = i / (float) Math.max(1, width - 1);
+            Color color = ColorUtil.interpolate(progress, left, right);
+            RenderUtil.drawRect(x + i, y, x + i + 1.0F, y + ITEM_HEIGHT, new Color(color.getRed(), color.getGreen(), color.getBlue(), Math.max(0, Math.min(255, alpha))).getRGB());
+        }
+        RenderUtil.disableRenderState();
+    }
+
+    private void drawText(FontRenderer font, String text, float x, float y, int color) {
+        if (fontMode.getValue() == 1) {
+            FontRender.drawString(text, x, y, color, false, 20.0F, true);
+        } else {
+            font.drawString(text, Math.round(x), Math.round(y), color, false);
+        }
+    }
+
+    private float getCenteredTextY(FontRenderer font, float rowY) {
+        return rowY + (ITEM_HEIGHT - getFontHeight(font)) / 2.0F;
+    }
+
+    private int getFontHeight(FontRenderer font) {
+        return fontMode.getValue() == 1 ? FontRender.getFontHeight(20.0F, true) : font.FONT_HEIGHT;
+    }
+
+    private int getStringWidth(FontRenderer font, String text) {
+        return fontMode.getValue() == 1 ? FontRender.getStringWidth(text, 20.0F, true) : font.getStringWidth(text);
+    }
+
+    private List<Module> getModulesForSelectedCategory() {
+        List<String> keys = new ArrayList<>(categories.keySet());
+        if (keys.isEmpty()) {
+            return new ArrayList<>();
+        }
+
+        categoryIndex = clamp(categoryIndex, 0, keys.size() - 1);
+        List<Class<? extends Module>> classes = categories.get(keys.get(categoryIndex));
+        List<Module> modules = new ArrayList<>();
+        if (classes == null) {
+            return modules;
+        }
+        for (Class<? extends Module> moduleClass : classes) {
+            Module module = Leader.moduleManager.getModule(moduleClass);
+            if (module != null) {
+                modules.add(module);
+            }
+        }
+        return modules;
     }
 
     private Module getSelectedModule() {
-        List<Module> modules = getModules();
-        return modules.isEmpty() ? null : modules.get(clamp(moduleIndex, 0, modules.size() - 1));
+        List<Module> modules = getModulesForSelectedCategory();
+        if (modules.isEmpty()) {
+            return null;
+        }
+        moduleIndex = clamp(moduleIndex, 0, modules.size() - 1);
+        return modules.get(moduleIndex);
     }
 
-    private List<Property<?>> getSettings() {
+    private List<Property<?>> getSettingsForSelectedModule() {
         Module module = getSelectedModule();
-        if (module == null || Leader.propertyManager == null) return new ArrayList<>();
-        List<Property<?>> result = new ArrayList<>();
-        List<Property<?>> properties = Leader.propertyManager.properties.get(module.getClass());
-        if (properties != null) for (Property<?> property : properties) if (property.isVisible()) result.add(property);
-        return result;
+        List<Property<?>> settings = new ArrayList<>();
+        if (module == null || Leader.propertyManager == null || Leader.propertyManager.properties.get(module.getClass()) == null) {
+            return settings;
+        }
+        for (Property<?> property : Leader.propertyManager.properties.get(module.getClass())) {
+            if (property.isVisible()) {
+                settings.add(property);
+            }
+        }
+        return settings;
     }
 
     private Property<?> getSelectedProperty() {
-        List<Property<?>> settings = getSettings();
-        return settingIndex <= 0 || settingIndex > settings.size() ? null : settings.get(settingIndex - 1);
+        List<Property<?>> settings = getSettingsForSelectedModule();
+        if (settings.isEmpty()) {
+            return null;
+        }
+        settingIndex = clamp(settingIndex, 0, settings.size() - 1);
+        return settings.get(settingIndex);
     }
 
-    private ModeProperty getMode() {
+    private ModeProperty getSelectedModeProperty() {
         Property<?> property = getSelectedProperty();
         return property instanceof ModeProperty ? (ModeProperty) property : null;
     }
 
-    private void syncModeIndex() {
-        ModeProperty mode = getMode();
-        modeIndex = mode == null ? 0 : mode.getValue();
+    private int getSettingsSelectedRow() {
+        return getSettingsForSelectedModule().isEmpty() ? 0 : settingIndex + 1;
+    }
+
+    private void syncSubIndex() {
+        ModeProperty mode = getSelectedModeProperty();
+        subIndex = mode == null ? 0 : mode.getValue();
     }
 
     private void clampSelections() {
         categoryIndex = clamp(categoryIndex, 0, Math.max(0, categories.size() - 1));
-        moduleIndex = clamp(moduleIndex, 0, Math.max(0, getModules().size() - 1));
-        settingIndex = clamp(settingIndex, 0, getSettings().size());
-        ModeProperty mode = getMode();
-        modeIndex = clamp(modeIndex, 0, mode == null ? 0 : Math.max(0, mode.getModes().length - 1));
-        if (level > 1 && getSettings().isEmpty()) level = 1;
-        if (level > 2 && mode == null) level = 2;
+        moduleIndex = clamp(moduleIndex, 0, Math.max(0, getModulesForSelectedCategory().size() - 1));
+        settingIndex = clamp(settingIndex, 0, Math.max(0, getSettingsForSelectedModule().size() - 1));
+        ModeProperty mode = getSelectedModeProperty();
+        subIndex = clamp(subIndex, 0, mode == null ? 0 : Math.max(0, mode.getModes().length - 1));
+        if (level > 1 && getSettingsForSelectedModule().isEmpty()) {
+            level = 1;
+        }
+        if (level > 2 && mode == null) {
+            level = 2;
+        }
+    }
+
+    private int propertyTextColor(Property<?> property) {
+        if (property instanceof BooleanProperty) {
+            return ((BooleanProperty) property).getValue() ? Color.WHITE.getRGB() : new Color(150, 150, 150).getRGB();
+        }
+        return new Color(205, 205, 205).getRGB();
+    }
+
+    private String formatValue(Property<?> property) {
+        if (property instanceof BooleanProperty) {
+            return ((BooleanProperty) property).getValue() ? "On" : "Off";
+        }
+        if (property instanceof PercentProperty) {
+            return ((PercentProperty) property).getValue() + "%";
+        }
+        if (property instanceof IntProperty) {
+            return String.valueOf(((IntProperty) property).getValue());
+        }
+        if (property instanceof FloatProperty) {
+            return formatFloat(((FloatProperty) property).getValue());
+        }
+        if (property instanceof ColorProperty) {
+            return String.format("#%06X", ((ColorProperty) property).getValue() & 0xFFFFFF);
+        }
+        if (property instanceof TextProperty) {
+            return String.valueOf(((TextProperty) property).getValue());
+        }
+        return String.valueOf(property.getValue());
+    }
+
+    private String formatFloat(float value) {
+        if (Math.abs(value - Math.round(value)) < 0.01F) {
+            return String.valueOf(Math.round(value));
+        }
+        return String.format(Locale.US, "%.1f", value);
+    }
+
+    private String formatLabel(String value) {
+        if (value == null || value.trim().isEmpty()) {
+            return "?";
+        }
+        String normalized = value.replace('_', ' ').replace('-', ' ').trim();
+        if (normalized.equals(normalized.toUpperCase(Locale.ROOT))) {
+            normalized = normalized.toLowerCase(Locale.ROOT);
+        }
+        StringBuilder builder = new StringBuilder();
+        for (String part : normalized.split(" ")) {
+            if (part.isEmpty()) {
+                continue;
+            }
+            if (builder.length() > 0) {
+                builder.append(' ');
+            }
+            builder.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
+        }
+        return builder.toString();
+    }
+
+    private String limitText(FontRenderer font, String text, float maxWidth) {
+        if (text == null) {
+            return "";
+        }
+        String suffix = "...";
+        String source = text;
+        boolean overLimit = source.length() > MAX_TEXT_CHARS;
+        int kept = Math.min(source.length(), MAX_TEXT_CHARS);
+        String limited = overLimit ? source.substring(0, kept) + suffix : source;
+        if (getStringWidth(font, limited) <= maxWidth) {
+            return limited;
+        }
+
+        for (int i = kept; i >= 0; i--) {
+            String candidate = source.substring(0, i) + suffix;
+            if (getStringWidth(font, candidate) <= maxWidth) {
+                return candidate;
+            }
+        }
+        return "";
     }
 
     private int scrollStart(int selected, int size) {
-        return size <= MAX_ROWS ? 0 : clamp(selected - MAX_ROWS / 2, 0, size - MAX_ROWS);
+        if (size <= MAX_VISIBLE_ROWS) {
+            return 0;
+        }
+        return clamp(selected - MAX_VISIBLE_ROWS / 2, 0, size - MAX_VISIBLE_ROWS);
     }
 
     private int wrap(int value, int size) {
-        if (size <= 0) return 0;
-        return (value % size + size) % size;
+        if (size <= 0) {
+            return 0;
+        }
+        int result = value % size;
+        return result < 0 ? result + size : result;
     }
 
-    private int clamp(int value, int min, int max) { return Math.max(min, Math.min(max, value)); }
-    private float clamp(float value, float min, float max) { return Math.max(min, Math.min(max, value)); }
+    private int clamp(int value, int min, int max) {
+        return Math.max(min, Math.min(max, value));
+    }
 
-    private String label(String value) {
-        String normalized = value.replace('_', ' ').replace('-', ' ').toLowerCase(Locale.ROOT);
-        StringBuilder result = new StringBuilder();
-        for (String part : normalized.split(" ")) {
-            if (part.isEmpty()) continue;
-            if (result.length() > 0) result.append(' ');
-            result.append(Character.toUpperCase(part.charAt(0))).append(part.substring(1));
-        }
-        return result.toString();
+    private float clamp(float value, float min, float max) {
+        return Math.max(min, Math.min(max, value));
+    }
+
+    private float animate(float current, float target, float speed) {
+        return current + (target - current) * speed;
+    }
+
+    private static int swapAlpha(int color, float alpha) {
+        int a = Math.round(alpha);
+        a = Math.min(255, Math.max(0, a));
+        return (color & 0x00FFFFFF) | (a << 24);
+    }
+
+    private static final class ColumnAnim {
+        private float x;
+        private float alpha;
+        private float selectedY;
     }
 
     private static final class Row {
         private final String name;
         private final String value;
+        private final boolean hasSub;
         private final int color;
 
-        private Row(String name, int color) { this(name, "", color); }
-        private Row(String name, String value, int color) { this.name = name; this.value = value; this.color = color; }
-        private Row(String name, int color, boolean ignored) { this(name, "", color); }
+        private Row(String name, String value, boolean hasSub, int color) {
+            this.name = name;
+            this.value = value == null ? "" : value;
+            this.hasSub = hasSub;
+            this.color = color;
+        }
     }
 }

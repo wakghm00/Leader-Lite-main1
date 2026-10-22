@@ -154,6 +154,59 @@ public class MoveUtil {
         return new double[]{0.0, 0.0};
     }
 
+    // ==== 移植自 Rise 6.9.5 的 util/player/MoveUtil ====
+
+    public static boolean isMoving() {
+        return MoveUtil.mc.thePlayer.moveForward != 0.0F || MoveUtil.mc.thePlayer.moveStrafing != 0.0F;
+    }
+
+    /**
+     * Rise 的 direction()，返回当前移动方向的弧度值
+     */
+    public static double direction() {
+        float f = MoveUtil.mc.thePlayer.rotationYaw;
+        if (MoveUtil.mc.thePlayer.moveForward < 0.0F) {
+            f += 180.0F;
+        }
+        float f1 = 1.0F;
+        if (MoveUtil.mc.thePlayer.moveForward < 0.0F) {
+            f1 = -0.5F;
+        } else if (MoveUtil.mc.thePlayer.moveForward > 0.0F) {
+            f1 = 0.5F;
+        }
+        if (MoveUtil.mc.thePlayer.moveStrafing > 0.0F) {
+            f -= 90.0F * f1;
+        }
+        if (MoveUtil.mc.thePlayer.moveStrafing < 0.0F) {
+            f += 90.0F * f1;
+        }
+        return Math.toRadians(f);
+    }
+
+    /**
+     * Rise 的 strafe(double)，把当前水平速度设置为指定值
+     */
+    public static void strafe(double speed) {
+        if (!MoveUtil.isMoving()) {
+            return;
+        }
+        double rotation = MoveUtil.direction();
+        MoveUtil.mc.thePlayer.motionX = -MathHelper.sin((float) rotation) * speed;
+        MoveUtil.mc.thePlayer.motionZ = MathHelper.cos((float) rotation) * speed;
+    }
+
+    /**
+     * Rise 的 moveFlying(double)，沿移动方向叠加速度
+     */
+    public static void moveFlying(double amount) {
+        if (!MoveUtil.isMoving()) {
+            return;
+        }
+        double rotation = MoveUtil.direction();
+        MoveUtil.mc.thePlayer.motionX += -MathHelper.sin((float) rotation) * amount;
+        MoveUtil.mc.thePlayer.motionZ += MathHelper.cos((float) rotation) * amount;
+    }
+
     public static void fixStrafe(float targetYaw) {
         float angle = MathHelper.wrapAngleTo180_float(MoveUtil.adjustYaw(MoveUtil.mc.thePlayer.rotationYaw, MoveUtil.getForwardValue(), MoveUtil.getLeftValue()) - targetYaw + 22.5f);
         switch ((int) (angle + 180.0f) / 45 % 8) {

@@ -6,15 +6,19 @@ import leader.event.types.EventType;
 import leader.events.LivingUpdateEvent;
 import leader.events.MoveInputEvent;
 import leader.events.PlayerUpdateEvent;
+import leader.events.SlowDownEvent;
 import leader.events.UpdateEvent;
 import leader.management.RotationState;
 import leader.module.modules.misc.AntiDebuff;
 import leader.module.modules.movement.NoSlow;
+import leader.module.modules.movement.NoSlow2;
 import leader.module.modules.movement.Timer;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.EntityPlayerSP;
 import net.minecraft.potion.Potion;
 import net.minecraft.util.BlockPos;
 import net.minecraft.util.MathHelper;
+import net.minecraft.util.MovementInput;
 import net.minecraftforge.fml.relauncher.Side;
 import net.minecraftforge.fml.relauncher.SideOnly;
 import org.spongepowered.asm.mixin.Mixin;
@@ -24,6 +28,7 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @SideOnly(Side.CLIENT)
 @Mixin(value = {EntityPlayerSP.class}, priority = 9999)
@@ -44,6 +49,10 @@ public abstract class MixinEntityPlayerSP extends MixinEntityPlayer {
     public float renderArmYaw;
     @Shadow
     public float prevRenderArmYaw;
+    @Shadow
+    protected int sprintToggleTimer;
+    @Shadow
+    public MovementInput movementInput;
 
     @Inject(
             method = {"onUpdate"},
@@ -139,6 +148,22 @@ public abstract class MixinEntityPlayerSP extends MixinEntityPlayer {
     )
     private void updateMove(CallbackInfo callbackInfo) {
         EventManager.call(new MoveInputEvent());
+        // 移植自 Rise：使用物品时的移动减速事件
+        if (Leader.moduleManager == null) {
+            return;
+        }
+        NoSlow2 noSlow2 = (NoSlow2) Leader.moduleManager.modules.get(NoSlow2.class);
+        if (noSlow2 == null || !noSlow2.shouldHandleSlowDown()) {
+            return;
+        }
+        SlowDownEvent event = new SlowDownEvent(0.2F, 0.2F);
+        EventManager.call(event);
+        this.sprintToggleTimer = 0;
+        if (event.isCancelled()) {
+            return;
+        }
+        this.movementInput.moveStrafe *= event.getStrafeMultiplier();
+        this.movementInput.moveForward *= event.getForwardMultiplier();
     }
 
     @Redirect(
@@ -150,6 +175,11 @@ public abstract class MixinEntityPlayerSP extends MixinEntityPlayer {
     )
     private boolean isUsing(EntityPlayerSP entityPlayerSP) {
         NoSlow noSlow = (NoSlow) Leader.moduleManager.modules.get(NoSlow.class);
+        NoSlow2 noSlow2 = (NoSlow2) Leader.moduleManager.modules.get(NoSlow2.class);
+        if (noSlow2 != null && noSlow2.shouldHandleSlowDown()) {
+            // 减速逻辑完全由 NoSlow2 + SlowDownEvent 接管
+            return false;
+        }
         return (!noSlow.isEnabled() || !noSlow.isAnyActive()) && entityPlayerSP.isUsingItem();
     }
 

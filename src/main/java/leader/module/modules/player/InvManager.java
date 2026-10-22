@@ -13,6 +13,7 @@ import net.minecraft.world.WorldSettings.GameType;
 import org.apache.commons.lang3.RandomUtils;
 import leader.event.EventTarget;
 import leader.event.types.EventType;
+import leader.events.AttackEvent;
 import leader.events.UpdateEvent;
 import leader.events.WindowClickEvent;
 import leader.module.Module;
@@ -42,6 +43,11 @@ public class InvManager extends Module {
     public final IntProperty moreArmorPairs = new IntProperty("MoreArmorPairs", 1, 1, 6, () -> autoArmor.getValue() && moreArmor.getValue());
     public final BooleanProperty dropTrash = new BooleanProperty("Drop Trash", true);
     public final IntProperty swordSlot = new IntProperty("Sword Slot", 1, 0, 9);
+    public final BooleanProperty moreSword = new BooleanProperty("MoreSword", false);
+    public final IntProperty moreSwordCount = new IntProperty("MoreSwordCount", 1, 1, 4, moreSword::getValue);
+    public final BooleanProperty swordSwitch = new BooleanProperty("SwordSwitch", false, () -> mode.getValue() == 2);
+    public final IntProperty swordSwitchDelay = new IntProperty("SwordSwitchDelay", 1, 1, 3, () -> mode.getValue() == 2 && swordSwitch.getValue());
+    public final BooleanProperty swordSwitchAxe = new BooleanProperty("SwordSwitchAxe", false, () -> mode.getValue() == 2 && swordSwitch.getValue());
     public final IntProperty pickaxeSlot = new IntProperty("Pickaxe Slot", 8, 0, 9);
     public final IntProperty shovelSlot = new IntProperty("Shovel Slot", 7, 0, 9);
     public final IntProperty axeSlot = new IntProperty("Axe Slot", 9, 0, 9);
@@ -59,6 +65,8 @@ public class InvManager extends Module {
 
     private int actionDelay = 0;
     private int oDelay = 0;
+    private int swordSwitchTick = 0;
+    private int attackTimer = 0;
     private boolean inventoryOpen = false;
     private boolean spoofServerOpen = false;
     private boolean spoofNextClose = false;
@@ -364,6 +372,178 @@ public class InvManager extends Module {
         return count;
     }
 
+    private boolean isSwordLike(ItemStack stack) {
+        if (stack == null) return false;
+        if (stack.getItem() instanceof ItemSword) return true;
+        // 斧子是否算武器只取决于配置，不随攻击状态变化，避免脱战时斧子被当垃圾丢掉
+        return this.isSwordSwitchEnabled() && this.swordSwitchAxe.getValue()
+                && stack.getItem() instanceof ItemAxe;
+    }
+
+    /**
+     * Sword Switch 是否被配置开启（Spoof 模式）。
+     * 只用于「保留剑/斧」这类需要长期稳定的判断，实际换剑请看 {@link #isSwordSwitchActive()}。
+     */
+    private boolean isSwordSwitchEnabled() {
+        return this.isEnabled() && this.mode.getValue() == 2 && this.swordSwitch.getValue();
+    }
+
+    /**
+     * Sword Switch 实际生效：配置开启 + 当前正在攻击。
+     * SwordSwitch / SwordSwitchAxe 只在攻击时启用，脱战后不再循环换剑。
+     */
+    private boolean isSwordSwitchActive() {
+        return this.isSwordSwitchEnabled() && this.isAttackActive();
+    }
+
+    /**
+     * 是否正处于交战状态。
+     * 只认真正的攻击（{@link AttackEvent}），不把「按住左键挖方块」算作攻击。
+     */
+    private boolean isAttackActive() {
+        return this.attackTimer > 0;
+    }
+
+    /**
+     * 是否需要对多余的剑做保留/丢弃管理。
+     * MoreSword 所有模式都生效；SwordSwitch 只在 Spoof 模式生效。
+     */
+    private boolean isSwordRetentionActive() {
+        return this.isEnabled()
+                && (this.moreSword.getValue() || this.isSwordSwitchEnabled());
+    }
+
+    private boolean isSwordDepleted(ItemStack stack) {
+        return this.isArmorDepleted(stack);
+    }
+
+    /**
+     * Sword Slot 里是否已经放着一把可用的剑/斧。
+     */
+    private boolean isSwordSlotReady() {
+        int target = this.swordSlot.getValue() - 1;
+        if (target < 0 || target > 8) return false;
+        ItemStack held = mc.thePlayer.inventory.getStackInSlot(target);
+        return this.isSwordLike(held) && !this.isSwordDepleted(held);
+    }
+
+    /**
+     * Sword Switch 正在接管 Sword Slot（Spoof 模式 + Switch 开启 + 槽里已有剑）。
+     * 此时不能再要求“最好的剑必须在 Sword Slot”，否则会被循环换剑反复打乱。
+     * 槽里还没有剑时必须返回 false，让正常整理流程先把剑放进去。
+     */
+    private boolean isSwordSwitchEngaged() {
+        return this.isSwordSwitchActive() && this.isSwordSlotReady();
+    }
+
+    private double getSwordScore(ItemStack stack) {
+        if (stack == null || !this.isSwordLike(stack)) return -1.0;
+        double score = ItemUtil.getAttackBonus(stack);
+        if (stack.getMaxDamage() > 0) {
+            score += (double) (stack.getMaxDamage() - stack.getItemDamage())
+                     / (double) stack.getMaxDamage() * 0.001;
+        }
+        return score;
+    }
+
+    /**
+     * 按评分从高到低收集背包内的剑（SwordSwitchAxe 开启时含斧）。
+     * 耐久耗尽的不计入。
+     */
+    private ArrayList<Integer> getSortedSwordSlots() {
+        ArrayList<Integer> slots = new ArrayList<>();
+        for (int i = 0; i < 36; i++) {
+            ItemStack stack = mc.thePlayer.inventory.getStackInSlot(i);
+            if (!this.isSwordLike(stack) || this.isSwordDepleted(stack)) continue;
+            slots.add(i);
+        }
+        slots.sort((a, b) -> Double.compare(
+                this.getSwordScore(mc.thePlayer.inventory.getStackInSlot(b)),
+                this.getSwordScore(mc.thePlayer.inventory.getStackInSlot(a))
+        ));
+        return slots;
+    }
+
+    /**
+     * More Sword: 背包内需要保留的备选剑槽位（按评分取前 count 把）。
+     * 若开启 Sword Switch，则在排序列表上多让出一把，配合循环换剑。
+     */
+    private Set<Integer> getProtectedSwordSlots() {
+        Set<Integer> slots = new HashSet<>();
+        if (!this.isSwordRetentionActive()) return slots;
+        ArrayList<Integer> sorted = this.getSortedSwordSlots();
+        // Sword Slot 里已有的（未耗尽的）剑始终保留，避免整理过程中被当成垃圾丢掉
+        if (this.isSwordSlotReady()) {
+            slots.add(this.swordSlot.getValue() - 1);
+        }
+        if (!this.moreSword.getValue()) {
+            // 没开 MoreSword 但开了 SwordSwitch 时，切换需要多把剑，全部保留
+            slots.addAll(sorted);
+            return slots;
+        }
+        // MoreSwordCount 是「额外多留」的数量，Sword Slot 里那把另算
+        int keep = this.moreSwordCount.getValue() + (this.isSwordSlotReady() ? 1 : 0);
+        // 只要开着 SwordSwitch（不论此刻是否在攻击）就多留一把，避免脱战时剑被丢光
+        if (this.isSwordSwitchEnabled()) keep++;
+        for (int i = 0; i < Math.min(keep, sorted.size()); i++) {
+            slots.add(sorted.get(i));
+        }
+        return slots;
+    }
+
+    private int getSwordSwitchInterval() {
+        // delay 1-3 范围，按 tick 计
+        return Math.max(1, this.swordSwitchDelay.getValue());
+    }
+
+    /**
+     * Sword Switch: 当前是否还有可循环的下一把剑。
+     * 用于判断“背包是否已整理好”，避免无剑可换时一直判定为未整理。
+     */
+    private boolean canCycleSwordSwitch() {
+        if (!this.isSwordSwitchActive()) return false;
+        int target = this.swordSlot.getValue() - 1;
+        if (target < 0 || target > 8) return false;
+        if (!this.isSwordSlotReady()) return false;
+        ArrayList<Integer> slots = this.getSortedSwordSlots();
+        if (slots.size() < 2) return false;
+        for (int slot : slots) {
+            if (slot != target) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Sword Switch: 循环把背包中的下一把剑换到 Sword Slot。
+     * @return 是否执行了换剑点击
+     */
+    private boolean cycleSwordSwitch() {
+        if (!this.isSwordSwitchActive()) return false;
+        // 未到切换间隔时不做任何换剑
+        if (this.swordSwitchTick > 0) return false;
+        ArrayList<Integer> slots = this.getSortedSwordSlots();
+        if (slots.size() < 2) return false;
+
+        int target = this.swordSlot.getValue() - 1;
+        if (target < 0 || target > 8) return false;
+
+        // Sword Slot 里还不是可用的剑时，先交给正常整理流程把它填好
+        if (!this.isSwordSlotReady()) return false;
+
+        int current = slots.indexOf(target);
+        int nextIndex = current == -1 ? 0 : (current + 1) % slots.size();
+        int nextSlot = slots.get(nextIndex);
+        if (nextSlot == target) {
+            nextIndex = (nextIndex + 1) % slots.size();
+            nextSlot = slots.get(nextIndex);
+        }
+        if (nextSlot == target) return false;
+
+        this.swordSwitchTick = this.getSwordSwitchInterval();
+        this.clickSlot(mc.thePlayer.inventoryContainer.windowId, this.convertSlotIndex(nextSlot), target, 2);
+        return true;
+    }
+
     private void spoofOpen() {
         if (!spoofServerOpen) {
             PacketUtil.sendPacket(new C16PacketClientStatus(C16PacketClientStatus.EnumState.OPEN_INVENTORY_ACHIEVEMENT));
@@ -381,6 +561,11 @@ public class InvManager extends Module {
 
     private boolean isInventorySorted() {
         if (!isValidGameMode()) return true;
+
+        // Sword Switch: 冷却结束时返回 false，让整理流程打开背包并执行一次换剑
+        if (this.swordSwitchTick <= 0 && this.canCycleSwordSwitch()) {
+            return false;
+        }
 
         int preferredSwordHotbarSlot = this.swordSlot.getValue() - 1;
         int equippedSwordSlot = ItemUtil.findSwordInInventorySlot(preferredSwordHotbarSlot, true);
@@ -458,7 +643,9 @@ public class InvManager extends Module {
                 }
             }
         }
-        if (preferredSwordHotbarSlot >= 0 && preferredSwordHotbarSlot <= 8 && (equippedSwordSlot != -1 || inventorySwordSlot != -1)) {
+        // SwordSwitch 接管 Sword Slot 后，不能再用“最好的剑必须在该槽”来判断是否需要整理
+        if (!this.isSwordSwitchEngaged()
+                && preferredSwordHotbarSlot >= 0 && preferredSwordHotbarSlot <= 8 && (equippedSwordSlot != -1 || inventorySwordSlot != -1)) {
             if (equippedSwordSlot != preferredSwordHotbarSlot && inventorySwordSlot != preferredSwordHotbarSlot)
                 return false;
         }
@@ -498,6 +685,7 @@ public class InvManager extends Module {
             ArrayList<Integer> equippedArmorSlots = this.getArmorSlotsForTrash(true);
             ArrayList<Integer> inventoryArmorSlots = this.getArmorSlotsForTrash(false);
             Set<Integer> protectedArmorSlots = this.getProtectedArmorSlots();
+            Set<Integer> protectedSwordSlots = this.getProtectedSwordSlots();
 
             int currentBlockCount = this.getStackSize(inventoryBlocksSlot);
             int totalThrowsCount = this.getTotalThrowsCount();
@@ -505,7 +693,7 @@ public class InvManager extends Module {
             if (totalThrowsCount > this.throwsAmount.getValue()) {
                 for (int i = 0; i < 36; i++) {
                     if (!equippedArmorSlots.contains(i) && !inventoryArmorSlots.contains(i)
-                            && !protectedArmorSlots.contains(i)
+                            && !protectedArmorSlots.contains(i) && !protectedSwordSlots.contains(i)
                             && equippedSwordSlot != i && inventorySwordSlot != i && secondSwordSlot != i && prefSecondSwordSlot != i
                             && equippedPickaxeSlot != i && inventoryPickaxeSlot != i
                             && equippedShovelSlot != i && inventoryShovelSlot != i
@@ -523,7 +711,7 @@ public class InvManager extends Module {
 
             for (int i = 0; i < 36; i++) {
                 if (!equippedArmorSlots.contains(i) && !inventoryArmorSlots.contains(i)
-                        && !protectedArmorSlots.contains(i)
+                        && !protectedArmorSlots.contains(i) && !protectedSwordSlots.contains(i)
                         && equippedSwordSlot != i && inventorySwordSlot != i && secondSwordSlot != i && prefSecondSwordSlot != i
                         && equippedPickaxeSlot != i && inventoryPickaxeSlot != i
                         && equippedShovelSlot != i && inventoryShovelSlot != i
@@ -572,6 +760,12 @@ public class InvManager extends Module {
             if (this.oDelay > 0) {
                 this.oDelay--;
             }
+            if (this.swordSwitchTick > 0) {
+                this.swordSwitchTick--;
+            }
+            if (this.attackTimer > 0) {
+                this.attackTimer--;
+            }
             if (this.isEnabled() && this.isValidGameMode() && this.mode.getValue() == 2) {
                 if (this.actionDelay > 0) return;
                 if (mc.thePlayer.isUsingItem()) return;
@@ -609,6 +803,7 @@ public class InvManager extends Module {
                         ArrayList<Integer> equippedArmorSlots = this.getArmorSlotsForTrash(true);
                         ArrayList<Integer> inventoryArmorSlots = this.getArmorSlotsForTrash(false);
                         Set<Integer> protectedArmorSlots = this.getProtectedArmorSlots();
+                        Set<Integer> protectedSwordSlots = this.getProtectedSwordSlots();
                         int preferredSwordHotbarSlot = this.swordSlot.getValue() - 1;
                         int equippedSwordSlot = ItemUtil.findSwordInInventorySlot(preferredSwordHotbarSlot, true);
                         int inventorySwordSlot = ItemUtil.findSwordInInventorySlot(preferredSwordHotbarSlot, false);
@@ -666,8 +861,16 @@ public class InvManager extends Module {
                                     }
                                 }
                             }
+                            if (this.cycleSwordSwitch()) {
+                                return;
+                            }
                             LinkedHashSet<Integer> usedHotbarSlots = new LinkedHashSet<>();
-                            if (preferredSwordHotbarSlot >= 0 && preferredSwordHotbarSlot <= 8 && (equippedSwordSlot != -1 || inventorySwordSlot != -1)) {
+                            if (this.isSwordSwitchEngaged()) {
+                                // 循环换剑正在接管该槽位，只占住槽位、不让别的工具顶掉它
+                                if (preferredSwordHotbarSlot >= 0 && preferredSwordHotbarSlot <= 8) {
+                                    usedHotbarSlots.add(preferredSwordHotbarSlot);
+                                }
+                            } else if (preferredSwordHotbarSlot >= 0 && preferredSwordHotbarSlot <= 8 && (equippedSwordSlot != -1 || inventorySwordSlot != -1)) {
                                 usedHotbarSlots.add(preferredSwordHotbarSlot);
                                 if (equippedSwordSlot != preferredSwordHotbarSlot && inventorySwordSlot != preferredSwordHotbarSlot) {
                                     int slot = equippedSwordSlot != -1 ? equippedSwordSlot : inventorySwordSlot;
@@ -754,7 +957,7 @@ public class InvManager extends Module {
                                 if (totalThrowsCount > this.throwsAmount.getValue()) {
                                     for (int i = 35; i >= 0; i--) {
                                         if (!equippedArmorSlots.contains(i) && !inventoryArmorSlots.contains(i)
-                                                && !protectedArmorSlots.contains(i)
+                                                && !protectedArmorSlots.contains(i) && !protectedSwordSlots.contains(i)
                                                 && equippedSwordSlot != i && inventorySwordSlot != i && secondSwordSlot != i && prefSecondSwordSlot != i && prefSecondSwordSlot != i
                                                 && equippedPickaxeSlot != i && inventoryPickaxeSlot != i
                                                 && equippedShovelSlot != i && inventoryShovelSlot != i
@@ -774,7 +977,7 @@ public class InvManager extends Module {
                                 }
                                 for (int i = 0; i < 36; i++) {
                                     if (!equippedArmorSlots.contains(i) && !inventoryArmorSlots.contains(i)
-                                            && !protectedArmorSlots.contains(i)
+                                            && !protectedArmorSlots.contains(i) && !protectedSwordSlots.contains(i)
                                             && equippedSwordSlot != i && inventorySwordSlot != i && secondSwordSlot != i && prefSecondSwordSlot != i && prefSecondSwordSlot != i
                                             && equippedPickaxeSlot != i && inventoryPickaxeSlot != i
                                             && equippedShovelSlot != i && inventoryShovelSlot != i
@@ -965,7 +1168,7 @@ public class InvManager extends Module {
                             if (totalThrowsCount > throwsAmount.getValue()) {
                                 for (int i = 35; i >= 0; i--) {
                                     if (!eqArmor.contains(i) && !invArmor.contains(i)
-                                            && !protectedArmorSlots.contains(i)
+                                            && !protectedArmorSlots.contains(i) && !protectedSwordSlots.contains(i)
                                             && eqSwordDrop != i && invSwordDrop != i && secondSwordSlot != i && prefSecondSwordSlot != i && prefSecondSwordSlot != i
                                             && eqPickDrop != i && invPickDrop != i
                                             && eqShovelDrop != i && invShovelDrop != i
@@ -984,7 +1187,7 @@ public class InvManager extends Module {
                             }
                             for (int i = 0; i < 36; i++) {
                                 if (!eqArmor.contains(i) && !invArmor.contains(i)
-                                        && !protectedArmorSlots.contains(i)
+                                        && !protectedArmorSlots.contains(i) && !protectedSwordSlots.contains(i)
                                         && eqSwordDrop != i && invSwordDrop != i && secondSwordSlot != i && prefSecondSwordSlot != i && prefSecondSwordSlot != i
                                         && eqPickDrop != i && invPickDrop != i
                                         && eqShovelDrop != i && invShovelDrop != i
@@ -1036,6 +1239,17 @@ public class InvManager extends Module {
         }
     }
 
+    /**
+     * Sword Switch / SwordSwitchAxe 只在攻击时启用：
+     * 每次攻击后保持 0.5 秒的攻击状态，覆盖光环的出手间隔，脱战后立刻停止换剑。
+     */
+    @EventTarget
+    public void onAttack(AttackEvent event) {
+        if (!this.isEnabled()) return;
+        if (this.mode.getValue() != 2 || !this.swordSwitch.getValue()) return;
+        this.attackTimer = 10;
+    }
+
     @EventTarget
     public void onClick(WindowClickEvent event) {
         if (this.minDelay.getValue() == 0 && this.maxDelay.getValue() == 0) {
@@ -1050,6 +1264,8 @@ public class InvManager extends Module {
 
     @Override
     public void onEnabled() {
+        this.attackTimer = 0;
+        this.swordSwitchTick = 0;
         if (mode.getValue() == 2) {
             spoofServerOpen = false;
             spoofNextClose = false;
@@ -1058,6 +1274,8 @@ public class InvManager extends Module {
 
     @Override
     public void onDisabled() {
+        this.attackTimer = 0;
+        this.swordSwitchTick = 0;
         if (mode.getValue() == 2) {
             spoofClose();
             spoofServerOpen = false;
